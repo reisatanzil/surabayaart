@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../../supabase'
 
 function Profile() {
@@ -7,6 +7,9 @@ function Profile() {
   const [user, setUser] = useState(null)
   const [orders, setOrders] = useState([])
   const [loading, setLoading] = useState(true)
+  const [avatarUrl, setAvatarUrl] = useState(null)
+  const [uploadingPhoto, setUploadingPhoto] = useState(false)
+  const fileInputRef = useRef(null)
 
   useEffect(() => {
     const data = localStorage.getItem('user')
@@ -14,7 +17,61 @@ function Profile() {
     const u = JSON.parse(data)
     setUser(u)
     ambilRiwayat(u.id_pengguna)
+    ambilFotoProfil(u.id_pengguna)
   }, [])
+
+  async function ambilFotoProfil(id) {
+    const { data } = supabase.storage
+      .from('avatars')
+      .getPublicUrl(`${id}/avatar`)
+    // Tambahkan cache-busting agar gambar terbaru selalu dimuat
+    if (data?.publicUrl) {
+      setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
+    }
+  }
+
+  async function handleUploadFoto(e) {
+    const file = e.target.files?.[0]
+    if (!file || !user) return
+
+    // Validasi tipe file
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
+    if (!allowedTypes.includes(file.type)) {
+      alert('Format file tidak didukung. Gunakan JPG, PNG, atau WebP.')
+      return
+    }
+
+    // Validasi ukuran file (maks 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      alert('Ukuran file terlalu besar. Maksimal 2MB.')
+      return
+    }
+
+    setUploadingPhoto(true)
+    try {
+      const { error } = await supabase.storage
+        .from('avatars')
+        .upload(`${user.id_pengguna}/avatar`, file, {
+          upsert: true,
+          contentType: file.type,
+        })
+
+      if (error) throw error
+
+      // Refresh URL foto dengan cache-busting
+      const { data } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(`${user.id_pengguna}/avatar`)
+      setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
+    } catch (err) {
+      console.error('Gagal upload foto:', err)
+      alert('Gagal mengupload foto. Coba lagi.')
+    } finally {
+      setUploadingPhoto(false)
+      // Reset input agar file yang sama bisa diupload ulang
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
+  }
 
   async function ambilRiwayat(id) {
     const { data: orderData } = await supabase
@@ -88,16 +145,69 @@ function Profile() {
           alignItems: 'center', justifyContent: 'space-between'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <div style={{
-              width: 60, height: 60, borderRadius: '50%',
-              background: '#DFDACF', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0
-            }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="1.5">
-                <circle cx="12" cy="8" r="4"/>
-                <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
-              </svg>
+
+            {/* AVATAR + TOMBOL UPLOAD */}
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <div style={{
+                width: 60, height: 60, borderRadius: '50%',
+                background: '#DFDACF', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                overflow: 'hidden'
+              }}>
+                {avatarUrl ? (
+                  <img
+                    src={avatarUrl}
+                    alt="foto profil"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    onError={() => setAvatarUrl(null)}
+                  />
+                ) : (
+                  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="1.5">
+                    <circle cx="12" cy="8" r="4"/>
+                    <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                  </svg>
+                )}
+              </div>
+
+              {/* Tombol kamera kecil di pojok avatar */}
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={uploadingPhoto}
+                title="Ganti foto profil"
+                style={{
+                  position: 'absolute', bottom: 0, right: -2,
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: uploadingPhoto ? '#A39680' : '#262626',
+                  border: '2px solid white',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  cursor: uploadingPhoto ? 'not-allowed' : 'pointer',
+                  padding: 0, transition: 'background 0.2s'
+                }}
+              >
+                {uploadingPhoto ? (
+                  /* Spinner */
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
+                    style={{ animation: 'spin 1s linear infinite' }}>
+                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                  </svg>
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                    <circle cx="12" cy="13" r="4"/>
+                  </svg>
+                )}
+              </button>
+
+              {/* Input file tersembunyi */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                style={{ display: 'none' }}
+                onChange={handleUploadFoto}
+              />
             </div>
+
             <div>
               <p style={{ fontSize: 16, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
                 {user.nama_pengguna}
@@ -248,6 +358,14 @@ function Profile() {
           © 2026 SurabayArt. All rights reserved.
         </span>
       </div>
+
+      {/* CSS untuk spinner animation */}
+      <style>{`
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
 
     </div>
   )
