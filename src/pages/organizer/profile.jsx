@@ -18,6 +18,13 @@ function OrganizerProfile() {
   const [profilForm, setProfilForm] = useState({})
   const [savingProfil, setSavingProfil] = useState(false)
 
+  // State untuk approve pembayaran
+  const [eventBayar, setEventBayar] = useState(null)       // event yang sedang dilihat pembayarannya
+  const [orders, setOrders] = useState([])
+  const [loadingOrders, setLoadingOrders] = useState(false)
+  const [selectedOrder, setSelectedOrder] = useState(null)  // modal preview bukti
+  const [processingId, setProcessingId] = useState(null)
+
   useEffect(() => {
     const data = localStorage.getItem('user')
     if (!data) { navigate('/signin'); return }
@@ -34,7 +41,6 @@ function OrganizerProfile() {
       .eq('id_pengguna', id)
       .single()
 
-    console.log('org:', org)
     setPenyelenggara(org)
     if (org) {
       setProfilForm({
@@ -44,16 +50,84 @@ function OrganizerProfile() {
     }
     if (!org) { setLoading(false); return }
 
-    const { data: ev, error: evError } = await supabase
+    const { data: ev } = await supabase
       .from('pergelaran')
       .select('*')
       .eq('id_penyelenggara', org.id_penyelenggara)
-    
-    console.log('events:', ev)
-    console.log('error:', evError)
 
     setEvents(ev || [])
     setLoading(false)
+  }
+
+  // Ambil semua order dari satu event berdasarkan tiket → jadwal_event → pergelaran
+  async function ambilOrders(event) {
+    setEventBayar(event)
+    setLoadingOrders(true)
+    setOrders([])
+
+    // Ambil semua jadwal event ini
+    const { data: jadwals } = await supabase
+      .from('jadwal_event')
+      .select('id_jadwal')
+      .eq('id_pergelaran', event.id_pergelaran)
+
+    if (!jadwals || jadwals.length === 0) {
+      setLoadingOrders(false)
+      return
+    }
+
+    const jadwalIds = jadwals.map(j => j.id_jadwal)
+
+    // Ambil semua tiket dari jadwal-jadwal tersebut
+    const { data: tiketList } = await supabase
+      .from('tiket')
+      .select('id_order')
+      .in('id_jadwal', jadwalIds)
+      .not('id_order', 'is', null)
+
+    if (!tiketList || tiketList.length === 0) {
+      setLoadingOrders(false)
+      return
+    }
+
+    // Ambil unique order ids
+    const orderIds = [...new Set(tiketList.map(t => t.id_order))]
+
+    // Ambil data order lengkap beserta pengguna
+    const { data: orderData } = await supabase
+      .from('order')
+      .select('*, pengguna(nama_pengguna, email_pengguna)')
+      .in('id_order', orderIds)
+      .order('waktu_order', { ascending: false })
+
+    setOrders(orderData || [])
+    setLoadingOrders(false)
+  }
+
+  async function approveOrder(orderId) {
+    setProcessingId(orderId)
+    await supabase
+      .from('order')
+      .update({ status_validasi_bayar: 'approved' })
+      .eq('id_order', orderId)
+    setOrders(prev => prev.map(o =>
+      o.id_order === orderId ? { ...o, status_validasi_bayar: 'approved' } : o
+    ))
+    setSelectedOrder(prev => prev ? { ...prev, status_validasi_bayar: 'approved' } : null)
+    setProcessingId(null)
+  }
+
+  async function rejectOrder(orderId) {
+    setProcessingId(orderId)
+    await supabase
+      .from('order')
+      .update({ status_validasi_bayar: 'rejected' })
+      .eq('id_order', orderId)
+    setOrders(prev => prev.map(o =>
+      o.id_order === orderId ? { ...o, status_validasi_bayar: 'rejected' } : o
+    ))
+    setSelectedOrder(prev => prev ? { ...prev, status_validasi_bayar: 'rejected' } : null)
+    setProcessingId(null)
   }
 
   async function ambilSales(event) {
@@ -120,6 +194,23 @@ function OrganizerProfile() {
   const labelStyle = {
     fontSize: 12, fontWeight: 600,
     color: '#4D403A', marginBottom: 5, display: 'block'
+  }
+
+  // Badge status validasi pembayaran
+  function StatusBadge({ status }) {
+    const map = {
+      approved:  { bg: '#EAF3DE', color: '#27500A', label: 'Disetujui' },
+      rejected:  { bg: '#FDECEA', color: '#7B1A1A', label: 'Ditolak' },
+      pending:   { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
+    }
+    const s = map[status] || map['pending']
+    return (
+      <span style={{
+        fontSize: 10, padding: '3px 9px', borderRadius: 50,
+        fontWeight: 700, background: s.bg, color: s.color,
+        letterSpacing: 0.3
+      }}>{s.label}</span>
+    )
   }
 
   return (
@@ -227,7 +318,13 @@ function OrganizerProfile() {
             { key: 'my-events', label: 'My Events' },
             { key: 'sales', label: 'Sales' },
           ].map(tab => (
-            <button key={tab.key} onClick={() => { setMenu(tab.key); setEditMode(false); setEditProfil(false); setSelectedEvent(null) }}
+            <button key={tab.key} onClick={() => {
+              setMenu(tab.key)
+              setEditMode(false)
+              setEditProfil(false)
+              setSelectedEvent(null)
+              setEventBayar(null)
+            }}
               style={{
                 padding: '8px 18px', borderRadius: 50,
                 border: menu === tab.key ? 'none' : '1px solid #e8e4dc',
@@ -241,7 +338,7 @@ function OrganizerProfile() {
           ))}
         </div>
 
-        {/* PROFIL */}
+        {/* ──────────── PROFIL ──────────── */}
         {menu === 'profil' && !editProfil && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -314,8 +411,8 @@ function OrganizerProfile() {
           </div>
         )}
 
-        {/* MY EVENTS */}
-        {menu === 'my-events' && !editMode && (
+        {/* ──────────── MY EVENTS — list ──────────── */}
+        {menu === 'my-events' && !editMode && !eventBayar && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#262626', marginBottom: 16 }}>My Events</p>
             {loading ? (
@@ -351,18 +448,38 @@ function OrganizerProfile() {
                       {e.status_validasi ? 'Disetujui' : 'Menunggu Persetujuan'}
                     </span>
                   </div>
-                  <button onClick={() => { setEditForm(e); setEditMode(true) }} style={{
-                    padding: '6px 14px', background: '#FAFBF5',
-                    border: '1px solid #e8e4dc', borderRadius: 6,
-                    fontSize: 12, cursor: 'pointer', color: '#4D403A', fontFamily: 'inherit'
-                  }}>Edit</button>
+                  {/* Tombol Edit + Bukti Pembayaran */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
+                    <button onClick={() => { setEditForm(e); setEditMode(true) }} style={{
+                      padding: '6px 14px', background: '#FAFBF5',
+                      border: '1px solid #e8e4dc', borderRadius: 6,
+                      fontSize: 12, cursor: 'pointer', color: '#4D403A', fontFamily: 'inherit'
+                    }}>Edit</button>
+                    {e.status_validasi && (
+                      <button onClick={() => ambilOrders(e)} style={{
+                        padding: '6px 14px', background: '#4D403A',
+                        border: 'none', borderRadius: 6,
+                        fontSize: 12, cursor: 'pointer', color: 'white',
+                        fontFamily: 'inherit', fontWeight: 600,
+                        display: 'flex', alignItems: 'center', gap: 5
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                          <polyline points="14 2 14 8 20 8"/>
+                          <line x1="9" y1="13" x2="15" y2="13"/>
+                          <line x1="9" y1="17" x2="12" y2="17"/>
+                        </svg>
+                        Pembayaran
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))
             )}
           </div>
         )}
 
-        {/* EDIT EVENT */}
+        {/* ──────────── MY EVENTS — EDIT EVENT ──────────── */}
         {menu === 'my-events' && editMode && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
@@ -421,7 +538,169 @@ function OrganizerProfile() {
           </div>
         )}
 
-        {/* SALES */}
+        {/* ──────────── MY EVENTS — APPROVE PEMBAYARAN ──────────── */}
+        {menu === 'my-events' && !editMode && eventBayar && (
+          <div>
+            {/* Header */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+              <button onClick={() => setEventBayar(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#A39680', fontSize: 13, fontFamily: 'inherit',
+                display: 'flex', alignItems: 'center', gap: 4
+              }}>← Kembali</button>
+              <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>
+                Bukti Pembayaran
+              </p>
+            </div>
+
+            {/* Info event */}
+            <div style={{
+              background: 'white', borderRadius: 10,
+              border: '1px solid #e8e4dc', padding: '12px 16px',
+              marginBottom: 14, display: 'flex', alignItems: 'center', gap: 12
+            }}>
+              <img src={eventBayar.poster_pergelaran || '/placeholder.jpg'}
+                style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
+              <div>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#262626' }}>{eventBayar.nama_pergelaran}</p>
+                <p style={{ fontSize: 12, color: '#A39680' }}>{eventBayar.lokasi_pergelaran}</p>
+              </div>
+              {/* Summary badge */}
+              <div style={{ marginLeft: 'auto', textAlign: 'right' }}>
+                <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>Total Order</p>
+                <p style={{ fontSize: 18, fontWeight: 800, color: '#262626' }}>{orders.length}</p>
+              </div>
+            </div>
+
+            {/* Filter tabs */}
+            {orders.length > 0 && (
+              <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+                {['Semua', 'Menunggu', 'Disetujui', 'Ditolak'].map(f => {
+                  const countMap = {
+                    'Semua': orders.length,
+                    'Menunggu': orders.filter(o => !o.status_validasi_bayar || o.status_validasi_bayar === 'pending' || o.status_validasi_bayar === 'menunggu' || o.status_validasi_bayar === 'menunggu_validasi').length,
+                    'Disetujui': orders.filter(o => o.status_validasi_bayar === 'approved').length,
+                    'Ditolak': orders.filter(o => o.status_validasi_bayar === 'rejected').length,
+                  }
+                  return (
+                    <span key={f} style={{
+                      fontSize: 11, padding: '4px 10px', borderRadius: 50,
+                      background: '#F5F2ED', color: '#4D403A', fontWeight: 600, cursor: 'default'
+                    }}>
+                      {f} ({countMap[f]})
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+
+            {/* List order */}
+            <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', overflow: 'hidden' }}>
+              {loadingOrders ? (
+                <p style={{ padding: 24, color: '#A39680', fontSize: 13 }}>Loading...</p>
+              ) : orders.length === 0 ? (
+                <p style={{ padding: 24, color: '#A39680', fontSize: 13, textAlign: 'center' }}>
+                  Belum ada order untuk event ini.
+                </p>
+              ) : (
+                orders.map((o, i) => {
+                  const statusVal = o.status_validasi_bayar || 'pending'
+                  const isPending = statusVal === 'pending' || statusVal === 'menunggu' || statusVal === 'menunggu_validasi' || !o.status_validasi_bayar
+                  return (
+                    <div key={o.id_order} style={{
+                      padding: '14px 16px',
+                      borderBottom: i < orders.length - 1 ? '1px solid #f0ece4' : 'none',
+                      display: 'flex', alignItems: 'center', gap: 12
+                    }}>
+                      {/* Avatar */}
+                      <div style={{
+                        width: 36, height: 36, borderRadius: '50%',
+                        background: '#DFDACF', display: 'flex',
+                        alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2">
+                          <circle cx="12" cy="8" r="4"/>
+                          <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
+                        </svg>
+                      </div>
+
+                      {/* Info */}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 1 }}>
+                          {o.pengguna?.nama_pengguna || 'Pengguna'}
+                        </p>
+                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 3 }}>
+                          {o.pengguna?.email_pengguna}
+                        </p>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, color: '#4D403A', fontWeight: 600 }}>
+                            Rp {parseInt(o.total_pembayaran).toLocaleString('id-ID')}
+                          </span>
+                          <span style={{ fontSize: 10, color: '#A39680' }}>·</span>
+                          <span style={{ fontSize: 11, color: '#A39680' }}>
+                            {new Date(o.waktu_order).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                          </span>
+                          <span style={{ fontSize: 10, color: '#A39680' }}>·</span>
+                          <span style={{ fontSize: 11, color: '#A39680' }}>{o.metode_bayar || o.metode_pembayaran}</span>
+                        </div>
+                      </div>
+
+                      {/* Status badge */}
+                      <StatusBadge status={statusVal} />
+
+                      {/* Tombol lihat bukti */}
+                      {o.bukti_bayar && (
+                        <button onClick={() => setSelectedOrder(o)} style={{
+                          padding: '6px 12px', background: '#F5F2ED',
+                          border: '1px solid #e8e4dc', borderRadius: 6,
+                          fontSize: 11, cursor: 'pointer', color: '#4D403A',
+                          fontFamily: 'inherit', fontWeight: 600, flexShrink: 0,
+                          display: 'flex', alignItems: 'center', gap: 4
+                        }}>
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                          </svg>
+                          Lihat Bukti
+                        </button>
+                      )}
+
+                      {/* Approve / Reject langsung jika pending */}
+                      {isPending && (
+                        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                          <button
+                            disabled={processingId === o.id_order}
+                            onClick={() => approveOrder(o.id_order)}
+                            style={{
+                              padding: '6px 12px', background: processingId === o.id_order ? '#ccc' : '#3B6D11',
+                              border: 'none', borderRadius: 6, fontSize: 11,
+                              cursor: processingId === o.id_order ? 'not-allowed' : 'pointer',
+                              color: 'white', fontFamily: 'inherit', fontWeight: 700
+                            }}>
+                            ✓ Approve
+                          </button>
+                          <button
+                            disabled={processingId === o.id_order}
+                            onClick={() => rejectOrder(o.id_order)}
+                            style={{
+                              padding: '6px 12px', background: processingId === o.id_order ? '#ccc' : '#7B1A1A',
+                              border: 'none', borderRadius: 6, fontSize: 11,
+                              cursor: processingId === o.id_order ? 'not-allowed' : 'pointer',
+                              color: 'white', fontFamily: 'inherit', fontWeight: 700
+                            }}>
+                            ✕ Tolak
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ──────────── SALES ──────────── */}
         {menu === 'sales' && !selectedEvent && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#262626', marginBottom: 16 }}>Sales</p>
@@ -530,6 +809,140 @@ function OrganizerProfile() {
         )}
 
       </div>
+
+      {/* ──────────── MODAL PREVIEW BUKTI BAYAR ──────────── */}
+      {selectedOrder && (
+        <div
+          onClick={() => setSelectedOrder(null)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            zIndex: 100, padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 14, width: '100%',
+              maxWidth: 420, overflow: 'hidden',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.18)'
+            }}
+          >
+            {/* Modal header */}
+            <div style={{
+              padding: '16px 20px', borderBottom: '1px solid #e8e4dc',
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <div>
+                <p style={{ fontSize: 14, fontWeight: 700, color: '#262626' }}>Bukti Pembayaran</p>
+                <p style={{ fontSize: 11, color: '#A39680', marginTop: 2 }}>
+                  {selectedOrder.pengguna?.nama_pengguna} · {selectedOrder.pengguna?.email_pengguna}
+                </p>
+              </div>
+              <button onClick={() => setSelectedOrder(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#A39680', fontSize: 18, lineHeight: 1
+              }}>✕</button>
+            </div>
+
+            {/* Bukti gambar */}
+            <div style={{ padding: 16 }}>
+              {selectedOrder.bukti_bayar ? (
+                <img
+                  src={selectedOrder.bukti_bayar}
+                  alt="Bukti Bayar"
+                  style={{
+                    width: '100%', borderRadius: 8,
+                    maxHeight: 300, objectFit: 'contain',
+                    border: '1px solid #e8e4dc', background: '#FAFBF5'
+                  }}
+                />
+              ) : (
+                <div style={{
+                  height: 160, background: '#F5F2ED', borderRadius: 8,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}>
+                  <p style={{ fontSize: 13, color: '#A39680' }}>Tidak ada bukti foto</p>
+                </div>
+              )}
+
+              {/* Detail order */}
+              <div style={{
+                marginTop: 14, background: '#FAFBF5',
+                borderRadius: 8, padding: '12px 14px',
+                display: 'flex', flexDirection: 'column', gap: 6
+              }}>
+                {[
+                  { label: 'Total Pembayaran', value: `Rp ${parseInt(selectedOrder.total_pembayaran).toLocaleString('id-ID')}` },
+                  { label: 'Metode', value: selectedOrder.metode_bayar || selectedOrder.metode_pembayaran },
+                  { label: 'Waktu Order', value: new Date(selectedOrder.waktu_order).toLocaleString('id-ID') },
+                  { label: 'Status', value: <StatusBadge status={selectedOrder.status_validasi_bayar || 'pending'} /> },
+                ].map((row, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: 12, color: '#A39680' }}>{row.label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Aksi approve/reject di modal */}
+            {(selectedOrder.status_validasi_bayar === 'pending' || selectedOrder.status_validasi_bayar === 'menunggu' || selectedOrder.status_validasi_bayar === 'menunggu_validasi' || !selectedOrder.status_validasi_bayar) && (
+              <div style={{
+                padding: '0 16px 16px',
+                display: 'flex', gap: 8
+              }}>
+                <button
+                  disabled={processingId === selectedOrder.id_order}
+                  onClick={() => approveOrder(selectedOrder.id_order)}
+                  style={{
+                    flex: 1, padding: '11px 0',
+                    background: processingId === selectedOrder.id_order ? '#ccc' : '#3B6D11',
+                    border: 'none', borderRadius: 8, fontSize: 13,
+                    cursor: processingId === selectedOrder.id_order ? 'not-allowed' : 'pointer',
+                    color: 'white', fontFamily: 'inherit', fontWeight: 700
+                  }}>
+                  {processingId === selectedOrder.id_order ? 'Memproses...' : '✓ Approve Pembayaran'}
+                </button>
+                <button
+                  disabled={processingId === selectedOrder.id_order}
+                  onClick={() => rejectOrder(selectedOrder.id_order)}
+                  style={{
+                    flex: 1, padding: '11px 0',
+                    background: processingId === selectedOrder.id_order ? '#ccc' : '#7B1A1A',
+                    border: 'none', borderRadius: 8, fontSize: 13,
+                    cursor: processingId === selectedOrder.id_order ? 'not-allowed' : 'pointer',
+                    color: 'white', fontFamily: 'inherit', fontWeight: 700
+                  }}>
+                  {processingId === selectedOrder.id_order ? 'Memproses...' : '✕ Tolak'}
+                </button>
+              </div>
+            )}
+
+            {/* Jika sudah diproses, tampilkan info */}
+            {selectedOrder.status_validasi_bayar === 'approved' && (
+              <div style={{ padding: '0 16px 16px' }}>
+                <div style={{
+                  background: '#EAF3DE', borderRadius: 8, padding: '12px 16px',
+                  textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#27500A'
+                }}>
+                  ✓ Pembayaran sudah disetujui
+                </div>
+              </div>
+            )}
+            {selectedOrder.status_validasi_bayar === 'rejected' && (
+              <div style={{ padding: '0 16px 16px' }}>
+                <div style={{
+                  background: '#FDECEA', borderRadius: 8, padding: '12px 16px',
+                  textAlign: 'center', fontSize: 13, fontWeight: 700, color: '#7B1A1A'
+                }}>
+                  ✕ Pembayaran telah ditolak
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* FOOTER */}
       <div style={{

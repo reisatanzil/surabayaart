@@ -11,6 +11,11 @@ function Profile() {
   const [uploadingPhoto, setUploadingPhoto] = useState(false)
   const fileInputRef = useRef(null)
 
+  const [uploadTargetOrder, setUploadTargetOrder] = useState(null)
+  const [buktiBayar, setBuktiBayar] = useState(null)
+  const [buktiBayarPreview, setBuktiBayarPreview] = useState(null)
+  const [uploading, setUploading] = useState(false)
+
   useEffect(() => {
     const data = localStorage.getItem('user')
     if (!data) { navigate('/signin'); return }
@@ -24,7 +29,6 @@ function Profile() {
     const { data } = supabase.storage
       .from('avatars')
       .getPublicUrl(`${id}/avatar`)
-    // Tambahkan cache-busting agar gambar terbaru selalu dimuat
     if (data?.publicUrl) {
       setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
     }
@@ -33,20 +37,15 @@ function Profile() {
   async function handleUploadFoto(e) {
     const file = e.target.files?.[0]
     if (!file || !user) return
-
-    // Validasi tipe file
     const allowedTypes = ['image/jpeg', 'image/png', 'image/webp']
     if (!allowedTypes.includes(file.type)) {
       alert('Format file tidak didukung. Gunakan JPG, PNG, atau WebP.')
       return
     }
-
-    // Validasi ukuran file (maks 2MB)
     if (file.size > 2 * 1024 * 1024) {
       alert('Ukuran file terlalu besar. Maksimal 2MB.')
       return
     }
-
     setUploadingPhoto(true)
     try {
       const { error } = await supabase.storage
@@ -55,39 +54,71 @@ function Profile() {
           upsert: true,
           contentType: file.type,
         })
-
       if (error) throw error
-
-      // Refresh URL foto dengan cache-busting
       const { data } = supabase.storage
         .from('avatars')
         .getPublicUrl(`${user.id_pengguna}/avatar`)
       setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
     } catch (err) {
-      console.error('Gagal upload foto:', err)
       alert('Gagal mengupload foto. Coba lagi.')
     } finally {
       setUploadingPhoto(false)
-      // Reset input agar file yang sama bisa diupload ulang
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
   }
 
   async function ambilRiwayat(id) {
-    const { data: orderData } = await supabase
+    const { data: orderData, error } = await supabase
       .from('order')
-      .select(`
-        *,
-        detail_order (
-          *,
-          tiket (*)
-        )
-      `)
+      .select(`*, detail_order(*), tiket(*)`)
       .eq('id_pengguna', id)
-      .order('created_at', { ascending: false })
+      .order('waktu_order', { ascending: false })
+
+    console.log('orderData:', JSON.stringify(orderData, null, 2))
+    console.log('error:', error)
 
     setOrders(orderData || [])
     setLoading(false)
+  }
+
+  function bukaModalUpload(order) {
+    setUploadTargetOrder(order)
+    setBuktiBayar(null)
+    setBuktiBayarPreview(null)
+  }
+
+  function handlePilihBukti(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setBuktiBayar(file)
+    setBuktiBayarPreview(URL.createObjectURL(file))
+  }
+
+  async function kirimBukti() {
+    if (!buktiBayar || !uploadTargetOrder) return
+    setUploading(true)
+    const path = `bukti/${uploadTargetOrder.id_order}_${buktiBayar.name}`
+    const { error: uploadError } = await supabase.storage
+      .from('documents')
+      .upload(path, buktiBayar, { upsert: true })
+    if (uploadError) {
+      alert('Gagal upload: ' + uploadError.message)
+      setUploading(false)
+      return
+    }
+    const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path)
+    await supabase.from('order').update({
+      bukti_bayar: urlData.publicUrl,
+      status_validasi_bayar: 'menunggu_validasi'
+    }).eq('id_order', uploadTargetOrder.id_order)
+
+    setOrders(prev => prev.map(o =>
+      o.id_order === uploadTargetOrder.id_order
+        ? { ...o, bukti_bayar: urlData.publicUrl, status_validasi_bayar: 'menunggu_validasi' }
+        : o
+    ))
+    setUploading(false)
+    setUploadTargetOrder(null)
   }
 
   function logout() {
@@ -96,6 +127,15 @@ function Profile() {
   }
 
   if (!user) return null
+
+  const ordersApproved = orders.filter(o => o.status_validasi_bayar === 'approved')
+  const ordersPending  = orders.filter(o =>
+    !o.status_validasi_bayar ||
+    o.status_validasi_bayar === 'menunggu' ||
+    o.status_validasi_bayar === 'menunggu_validasi' ||
+    o.status_validasi_bayar === 'pending'
+  )
+  const ordersRejected = orders.filter(o => o.status_validasi_bayar === 'rejected')
 
   return (
     <div style={{ fontFamily: 'Albert Sans, sans-serif', background: '#FAFBF5', minHeight: '100vh' }}>
@@ -145,22 +185,16 @@ function Profile() {
           alignItems: 'center', justifyContent: 'space-between'
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-
-            {/* AVATAR + TOMBOL UPLOAD */}
             <div style={{ position: 'relative', flexShrink: 0 }}>
               <div style={{
                 width: 60, height: 60, borderRadius: '50%',
                 background: '#DFDACF', display: 'flex',
-                alignItems: 'center', justifyContent: 'center',
-                overflow: 'hidden'
+                alignItems: 'center', justifyContent: 'center', overflow: 'hidden'
               }}>
                 {avatarUrl ? (
-                  <img
-                    src={avatarUrl}
-                    alt="foto profil"
+                  <img src={avatarUrl} alt="foto profil"
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                    onError={() => setAvatarUrl(null)}
-                  />
+                    onError={() => setAvatarUrl(null)} />
                 ) : (
                   <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="1.5">
                     <circle cx="12" cy="8" r="4"/>
@@ -168,46 +202,23 @@ function Profile() {
                   </svg>
                 )}
               </div>
-
-              {/* Tombol kamera kecil di pojok avatar */}
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={uploadingPhoto}
-                title="Ganti foto profil"
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploadingPhoto}
                 style={{
                   position: 'absolute', bottom: 0, right: -2,
                   width: 22, height: 22, borderRadius: '50%',
                   background: uploadingPhoto ? '#A39680' : '#262626',
-                  border: '2px solid white',
-                  display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  cursor: uploadingPhoto ? 'not-allowed' : 'pointer',
-                  padding: 0, transition: 'background 0.2s'
-                }}
-              >
-                {uploadingPhoto ? (
-                  /* Spinner */
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3"
-                    style={{ animation: 'spin 1s linear infinite' }}>
-                    <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-                  </svg>
-                ) : (
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
-                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                    <circle cx="12" cy="13" r="4"/>
-                  </svg>
-                )}
+                  border: '2px solid white', display: 'flex',
+                  alignItems: 'center', justifyContent: 'center',
+                  cursor: uploadingPhoto ? 'not-allowed' : 'pointer', padding: 0
+                }}>
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5">
+                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                  <circle cx="12" cy="13" r="4"/>
+                </svg>
               </button>
-
-              {/* Input file tersembunyi */}
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/jpeg,image/png,image/webp"
-                style={{ display: 'none' }}
-                onChange={handleUploadFoto}
-              />
+              <input ref={fileInputRef} type="file" accept="image/jpeg,image/png,image/webp"
+                style={{ display: 'none' }} onChange={handleUploadFoto} />
             </div>
-
             <div>
               <p style={{ fontSize: 16, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
                 {user.nama_pengguna}
@@ -238,113 +249,423 @@ function Profile() {
           </button>
         </div>
 
-        {/* RIWAYAT PEMBELIAN */}
-        <p style={{ fontSize: 16, fontWeight: 700, color: '#262626', marginBottom: 16 }}>
-          My Ticket
-        </p>
-
         {loading ? (
           <p style={{ color: '#A39680', fontSize: 13 }}>Loading...</p>
         ) : orders.length === 0 ? (
-          <div style={{
-            background: 'white', borderRadius: 10,
-            border: '1px solid #e8e4dc', padding: 32,
-            textAlign: 'center'
-          }}>
-            <p style={{ fontSize: 13, color: '#A39680' }}>No ticket yet.</p>
-            <button onClick={() => navigate('/reservasi')} style={{
-              marginTop: 12, padding: '8px 20px',
-              background: '#262626', color: 'white',
-              border: 'none', borderRadius: 8,
-              fontSize: 12, fontWeight: 600,
-              cursor: 'pointer', fontFamily: 'inherit'
-            }}>
-              Secure Your Ticket
-            </button>
-          </div>
-        ) : (
-          orders.map(order => (
-            <div key={order.id_order} style={{
+          <>
+            <p style={{ fontSize: 16, fontWeight: 700, color: '#262626', marginBottom: 16 }}>My Ticket</p>
+            <div style={{
               background: 'white', borderRadius: 10,
-              border: '1px solid #e8e4dc', padding: 20,
-              marginBottom: 14
+              border: '1px solid #e8e4dc', padding: 32, textAlign: 'center'
             }}>
-              {/* HEADER ORDER */}
-              <div style={{
-                display: 'flex', justifyContent: 'space-between',
-                alignItems: 'center', marginBottom: 14,
-                paddingBottom: 12, borderBottom: '1px solid #f0ece4'
-              }}>
-                <div>
-                  <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
-                    {new Date(order.created_at).toLocaleDateString('id-ID', {
-                      day: 'numeric', month: 'long', year: 'numeric'
-                    })}
-                  </p>
-                  <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
-                    #{order.id_order.slice(0, 8).toUpperCase()}
-                  </p>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: 14, fontWeight: 700, color: '#262626' }}>
-                    Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
-                  </p>
+              <p style={{ fontSize: 13, color: '#A39680' }}>No ticket yet.</p>
+              <button onClick={() => navigate('/reservasi')} style={{
+                marginTop: 12, padding: '8px 20px',
+                background: '#262626', color: 'white',
+                border: 'none', borderRadius: 8, fontSize: 12,
+                fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+              }}>Secure Your Ticket</button>
+            </div>
+          </>
+        ) : (
+          <>
+
+            {/* ── SECTION: MENUNGGU VALIDASI ── */}
+            {ordersPending.length > 0 && (
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>Menunggu Validasi</p>
                   <span style={{
                     fontSize: 11, padding: '2px 8px', borderRadius: 50,
-                    fontWeight: 600,
-                    background: order.status_pembayaran ? '#EAF3DE' : '#FAEEDA',
-                    color: order.status_pembayaran ? '#27500A' : '#633806'
-                  }}>
-                    {order.status_pembayaran ? 'Lunas' : 'Menunggu Pembayaran'}
-                  </span>
+                    background: '#FAEEDA', color: '#633806', fontWeight: 700
+                  }}>{ordersPending.length}</span>
                 </div>
-              </div>
 
-              {/* DETAIL ORDER & TIKET */}
-              {order.detail_order?.map(detail => (
-                <div key={detail.id_detail_order}>
-                  <div style={{
-                    display: 'flex', justifyContent: 'space-between',
-                    alignItems: 'center', marginBottom: 8
+                {ordersPending.map(order => (
+                  <div key={order.id_order} style={{
+                    background: 'white', borderRadius: 10,
+                    border: '1px solid #F5D99A', padding: 20, marginBottom: 12
                   }}>
-                    <span style={{ fontSize: 12, color: '#555' }}>
-                      {detail.jumlah} tiket × Rp {(detail.subtotal / detail.jumlah).toLocaleString('id-ID')}
-                    </span>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                      Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
-                    </span>
-                  </div>
-
-                  {/* LIST ID TIKET */}
-                  {detail.tiket?.map(t => (
-                    <div key={t.id_tiket} style={{
-                      background: '#F5F2ED', borderRadius: 8,
-                      padding: '10px 14px', marginBottom: 8,
-                      display: 'flex', alignItems: 'center',
-                      justifyContent: 'space-between'
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', marginBottom: 14,
+                      paddingBottom: 12, borderBottom: '1px solid #f0ece4'
                     }}>
                       <div>
-                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>ID Tiket</p>
-                        <p style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>
-                          {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
+                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
+                          {new Date(order.waktu_order).toLocaleDateString('id-ID', {
+                            day: 'numeric', month: 'long', year: 'numeric'
+                          })}
+                        </p>
+                        <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
+                          #{order.id_order.slice(0, 8).toUpperCase()}
                         </p>
                       </div>
-                      <span style={{
-                        fontSize: 11, padding: '3px 10px', borderRadius: 50,
-                        fontWeight: 600,
-                        background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
-                        color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A'
-                      }}>
-                        {t.status_tiket === 'used' ? 'Sudah dipakai' : 'Valid'}
-                      </span>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
+                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                        </p>
+                        <span style={{
+                          fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                          fontWeight: 600, background: '#FAEEDA', color: '#633806'
+                        }}>
+                          {order.status_validasi_bayar === 'menunggu_validasi'
+                            ? 'Bukti Terkirim — Menunggu Konfirmasi'
+                            : 'Belum Upload Bukti'}
+                        </span>
+                      </div>
                     </div>
-                  ))}
+
+                    {order.detail_order?.map(detail => (
+                      <div key={detail.id_detail_order} style={{
+                        display: 'flex', justifyContent: 'space-between', marginBottom: 6
+                      }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>{detail.jumlah} tiket</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
+                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    ))}
+
+                    {order.bukti_bayar && (
+                      <div style={{
+                        marginTop: 10, marginBottom: 10,
+                        background: '#FAFBF5', borderRadius: 8,
+                        border: '1px solid #e8e4dc', padding: 10,
+                        display: 'flex', alignItems: 'center', gap: 10
+                      }}>
+                        <img src={order.bukti_bayar} alt="bukti"
+                          style={{
+                            width: 52, height: 52, objectFit: 'cover',
+                            borderRadius: 6, border: '1px solid #e8e4dc', flexShrink: 0
+                          }} />
+                        <div>
+                          <p style={{ fontSize: 11, fontWeight: 700, color: '#4D403A', marginBottom: 2 }}>
+                            Bukti pembayaran sudah dikirim
+                          </p>
+                          <p style={{ fontSize: 11, color: '#A39680' }}>
+                            Menunggu konfirmasi dari penyelenggara
+                          </p>
+                        </div>
+                      </div>
+                    )}
+
+                    <button onClick={() => bukaModalUpload(order)} style={{
+                      marginTop: 8, width: '100%', padding: '10px',
+                      background: order.bukti_bayar ? 'transparent' : '#262626',
+                      color: order.bukti_bayar ? '#4D403A' : 'white',
+                      border: order.bukti_bayar ? '1px solid #4D403A' : 'none',
+                      borderRadius: 8, fontSize: 12, fontWeight: 700,
+                      cursor: 'pointer', fontFamily: 'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                      {order.bukti_bayar ? 'Ganti Bukti Pembayaran' : 'Upload Bukti Pembayaran'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── SECTION: DITOLAK ── */}
+            {ordersRejected.length > 0 && (
+              <div style={{ marginBottom: 28 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                  <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>Pembayaran Ditolak</p>
+                  <span style={{
+                    fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                    background: '#FDECEA', color: '#7B1A1A', fontWeight: 700
+                  }}>{ordersRejected.length}</span>
                 </div>
-              ))}
+
+                {ordersRejected.map(order => (
+                  <div key={order.id_order} style={{
+                    background: 'white', borderRadius: 10,
+                    border: '1px solid #F5C6C6', padding: 20, marginBottom: 12
+                  }}>
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', marginBottom: 14,
+                      paddingBottom: 12, borderBottom: '1px solid #f0ece4'
+                    }}>
+                      <div>
+                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
+                          {new Date(order.waktu_order).toLocaleDateString('id-ID', {
+                            day: 'numeric', month: 'long', year: 'numeric'
+                          })}
+                        </p>
+                        <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
+                          #{order.id_order.slice(0, 8).toUpperCase()}
+                        </p>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
+                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                        </p>
+                        <span style={{
+                          fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                          fontWeight: 600, background: '#FDECEA', color: '#7B1A1A'
+                        }}>Ditolak</span>
+                      </div>
+                    </div>
+
+                    {order.detail_order?.map(detail => (
+                      <div key={detail.id_detail_order} style={{
+                        display: 'flex', justifyContent: 'space-between', marginBottom: 6
+                      }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>{detail.jumlah} tiket</span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
+                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    ))}
+
+                    <div style={{
+                      marginTop: 10, background: '#FDECEA', borderRadius: 8,
+                      padding: '10px 14px', display: 'flex', alignItems: 'flex-start', gap: 8
+                    }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7B1A1A" strokeWidth="2.5"
+                        style={{ flexShrink: 0, marginTop: 1 }}>
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                      </svg>
+                      <div>
+                        <p style={{ fontSize: 12, fontWeight: 700, color: '#7B1A1A', marginBottom: 2 }}>
+                          Bukti pembayaran ditolak
+                        </p>
+                        <p style={{ fontSize: 11, color: '#7B1A1A', lineHeight: 1.5 }}>
+                          Upload ulang bukti pembayaran yang benar agar tiket bisa divalidasi.
+                        </p>
+                      </div>
+                    </div>
+
+                    <button onClick={() => bukaModalUpload(order)} style={{
+                      marginTop: 10, width: '100%', padding: '10px',
+                      background: '#7B1A1A', color: 'white',
+                      border: 'none', borderRadius: 8, fontSize: 12,
+                      fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}>
+                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                      </svg>
+                      Upload Ulang Bukti Pembayaran
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ── SECTION: MY TICKET (approved) ── */}
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 16 }}>
+                <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>My Ticket</p>
+                {ordersApproved.length > 0 && (
+                  <span style={{
+                    fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                    background: '#EAF3DE', color: '#27500A', fontWeight: 700
+                  }}>{ordersApproved.length}</span>
+                )}
+              </div>
+
+              {ordersApproved.length === 0 ? (
+                <div style={{
+                  background: 'white', borderRadius: 10,
+                  border: '1px solid #e8e4dc', padding: 32, textAlign: 'center'
+                }}>
+                  <p style={{ fontSize: 13, color: '#A39680', marginBottom: 4 }}>
+                    Tiket akan muncul setelah pembayaran divalidasi penyelenggara.
+                  </p>
+                  {ordersPending.length === 0 && ordersRejected.length === 0 && (
+                    <button onClick={() => navigate('/reservasi')} style={{
+                      marginTop: 12, padding: '8px 20px',
+                      background: '#262626', color: 'white',
+                      border: 'none', borderRadius: 8, fontSize: 12,
+                      fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
+                    }}>Secure Your Ticket</button>
+                  )}
+                </div>
+              ) : (
+                ordersApproved.map(order => (
+                  <div key={order.id_order} style={{
+                    background: 'white', borderRadius: 10,
+                    border: '1px solid #e8e4dc', padding: 20, marginBottom: 14
+                  }}>
+                    {/* Header order */}
+                    <div style={{
+                      display: 'flex', justifyContent: 'space-between',
+                      alignItems: 'center', marginBottom: 14,
+                      paddingBottom: 12, borderBottom: '1px solid #f0ece4'
+                    }}>
+                      <div>
+                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
+                          {new Date(order.waktu_order).toLocaleDateString('id-ID', {
+                            day: 'numeric', month: 'long', year: 'numeric'
+                          })}
+                        </p>
+                        <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
+                          #{order.id_order.slice(0, 8).toUpperCase()}
+                        </p>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
+                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                        </p>
+                        <span style={{
+                          fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                          fontWeight: 600, background: '#EAF3DE', color: '#27500A'
+                        }}>Tervalidasi ✓</span>
+                      </div>
+                    </div>
+
+                    {/* Info jumlah tiket dari detail_order */}
+                    {order.detail_order?.map(detail => (
+                      <div key={detail.id_detail_order} style={{
+                        display: 'flex', justifyContent: 'space-between',
+                        alignItems: 'center', marginBottom: 8
+                      }}>
+                        <span style={{ fontSize: 12, color: '#555' }}>
+                          {detail.jumlah} tiket × Rp {(detail.subtotal / detail.jumlah).toLocaleString('id-ID')}
+                        </span>
+                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
+                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
+                        </span>
+                      </div>
+                    ))}
+
+                    {/* List tiket langsung dari order */}
+                    <div style={{ marginTop: 8 }}>
+                      {order.tiket?.length > 0 ? (
+                        order.tiket.map(t => (
+                          <div key={t.id_tiket} style={{
+                            background: '#F5F2ED', borderRadius: 8,
+                            padding: '10px 14px', marginBottom: 8,
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'space-between'
+                          }}>
+                            <div>
+                              <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>ID Tiket</p>
+                              <p style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>
+                                {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
+                              </p>
+                            </div>
+                            <span style={{
+                              fontSize: 11, padding: '3px 10px', borderRadius: 50,
+                              fontWeight: 600,
+                              background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
+                              color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A'
+                            }}>
+                              {t.status_tiket === 'used' ? 'Sudah dipakai' : 'Valid'}
+                            </span>
+                          </div>
+                        ))
+                      ) : (
+                        <p style={{ fontSize: 12, color: '#A39680', textAlign: 'center', padding: '8px 0' }}>
+                          Tiket belum tersedia.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
-          ))
+
+          </>
         )}
       </div>
+
+      {/* ── MODAL UPLOAD BUKTI BAYAR ── */}
+      {uploadTargetOrder && (
+        <div
+          onClick={() => setUploadTargetOrder(null)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(38,38,38,0.6)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 100, padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 16,
+              padding: 28, maxWidth: 380, width: '100%'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>Upload Bukti Pembayaran</p>
+              <button onClick={() => setUploadTargetOrder(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#A39680', fontSize: 18, lineHeight: 1
+              }}>✕</button>
+            </div>
+
+            <p style={{ fontSize: 12, color: '#A39680', marginBottom: 16, lineHeight: 1.6 }}>
+              Order <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#4D403A' }}>
+                #{uploadTargetOrder.id_order.slice(0, 8).toUpperCase()}
+              </span> · Rp {parseInt(uploadTargetOrder.total_pembayaran).toLocaleString('id-ID')}
+            </p>
+
+            <div
+              onClick={() => document.getElementById('bukti-input-profile').click()}
+              style={{
+                border: '2px dashed #e8e4dc', borderRadius: 10,
+                padding: 24, textAlign: 'center', cursor: 'pointer',
+                background: '#FAFBF5', marginBottom: 16
+              }}>
+              {buktiBayarPreview ? (
+                <img src={buktiBayarPreview} alt="bukti"
+                  style={{ maxHeight: 200, borderRadius: 8, objectFit: 'contain' }} />
+              ) : uploadTargetOrder.bukti_bayar ? (
+                <div>
+                  <img src={uploadTargetOrder.bukti_bayar} alt="bukti lama"
+                    style={{ maxHeight: 140, borderRadius: 8, objectFit: 'contain', opacity: 0.6, marginBottom: 8 }} />
+                  <p style={{ fontSize: 11, color: '#A39680' }}>Klik untuk ganti foto bukti</p>
+                </div>
+              ) : (
+                <div>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#A39680" strokeWidth="1.5"
+                    style={{ margin: '0 auto 8px', display: 'block' }}>
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <polyline points="21 15 16 10 5 21"/>
+                  </svg>
+                  <p style={{ fontSize: 12, color: '#A39680' }}>Klik untuk upload foto bukti bayar</p>
+                  <p style={{ fontSize: 11, color: '#DFDACF', marginTop: 4 }}>JPG, PNG, max 5MB</p>
+                </div>
+              )}
+            </div>
+            <input id="bukti-input-profile" type="file" accept="image/*"
+              onChange={handlePilihBukti} style={{ display: 'none' }} />
+
+            <button onClick={kirimBukti} disabled={!buktiBayar || uploading} style={{
+              width: '100%', padding: '12px',
+              background: !buktiBayar || uploading ? '#A39680' : '#262626',
+              color: 'white', border: 'none', borderRadius: 8,
+              fontSize: 13, fontWeight: 700,
+              cursor: !buktiBayar || uploading ? 'not-allowed' : 'pointer',
+              fontFamily: 'inherit', marginBottom: 8
+            }}>
+              {uploading ? 'Mengupload...' : 'Kirim Bukti Pembayaran'}
+            </button>
+            <button onClick={() => setUploadTargetOrder(null)} style={{
+              width: '100%', padding: '10px',
+              background: 'transparent', color: '#A39680',
+              border: 'none', fontSize: 12,
+              cursor: 'pointer', fontFamily: 'inherit'
+            }}>
+              Batal
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* FOOTER */}
       <div style={{
@@ -359,7 +680,6 @@ function Profile() {
         </span>
       </div>
 
-      {/* CSS untuk spinner animation */}
       <style>{`
         @keyframes spin {
           from { transform: rotate(0deg); }
