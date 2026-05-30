@@ -16,6 +16,8 @@ function Profile() {
   const [buktiBayarPreview, setBuktiBayarPreview] = useState(null)
   const [uploading, setUploading] = useState(false)
 
+  const [selectedTicketOrder, setSelectedTicketOrder] = useState(null)
+
   useEffect(() => {
     const data = localStorage.getItem('user')
     if (!data) { navigate('/signin'); return }
@@ -572,6 +574,28 @@ function Profile() {
                         </p>
                       )}
                     </div>
+
+                    {/* Tombol Show My Ticket */}
+                    {order.tiket?.length > 0 && (
+                      <button
+                        onClick={() => setSelectedTicketOrder(order)}
+                        style={{
+                          marginTop: 12, width: '100%', padding: '10px',
+                          background: '#262626', color: 'white',
+                          border: 'none', borderRadius: 8, fontSize: 12,
+                          fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                        }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <path d="M20 12V22H4V12"/>
+                          <path d="M22 7H2v5h20V7z"/>
+                          <path d="M12 22V7"/>
+                          <path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/>
+                          <path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/>
+                        </svg>
+                        Show My Ticket
+                      </button>
+                    )}
                   </div>
                 ))
               )}
@@ -580,6 +604,126 @@ function Profile() {
           </>
         )}
       </div>
+
+      {/* ── MODAL MY TICKET ── */}
+      {selectedTicketOrder && (
+        <div
+          onClick={() => setSelectedTicketOrder(null)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(38,38,38,0.65)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 100, padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 16,
+              padding: 28, maxWidth: 420, width: '100%',
+              maxHeight: '85vh', overflowY: 'auto'
+            }}
+          >
+            {/* Header modal */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 }}>
+              <button
+                onClick={() => setSelectedTicketOrder(null)}
+                style={{
+                  background: '#F5F2ED', border: 'none', borderRadius: 8,
+                  width: 32, height: 32, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0
+                }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2.5">
+                  <polyline points="15 18 9 12 15 6"/>
+                </svg>
+              </button>
+              <div>
+                <p style={{ fontSize: 15, fontWeight: 700, color: '#262626' }}>My Ticket</p>
+                <p style={{ fontSize: 11, color: '#A39680', fontFamily: 'monospace' }}>
+                  #{selectedTicketOrder.id_order.slice(0, 8).toUpperCase()}
+                </p>
+              </div>
+            </div>
+
+            {/* Info order */}
+            <div style={{
+              background: '#F5F2ED', borderRadius: 10,
+              padding: '12px 16px', marginBottom: 20,
+              display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <div>
+                <p style={{ fontSize: 11, color: '#A39680', marginBottom: 3 }}>Tanggal Order</p>
+                <p style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>
+                  {new Date(selectedTicketOrder.waktu_order).toLocaleDateString('id-ID', {
+                    day: 'numeric', month: 'long', year: 'numeric'
+                  })}
+                </p>
+              </div>
+              <span style={{
+                fontSize: 11, padding: '4px 10px', borderRadius: 50,
+                fontWeight: 700, background: '#EAF3DE', color: '#27500A'
+              }}>Tervalidasi ✓</span>
+            </div>
+
+            {/* List tiket */}
+            <p style={{ fontSize: 12, fontWeight: 700, color: '#4D403A', marginBottom: 10, letterSpacing: 0.5 }}>
+              {selectedTicketOrder.tiket?.length} Tiket
+            </p>
+            {selectedTicketOrder.tiket?.map((t, idx) => (
+              <div key={t.id_tiket} style={{
+                border: '1px solid #e8e4dc', borderRadius: 10,
+                padding: '14px 16px', marginBottom: 10,
+                background: t.status_tiket === 'used' ? '#FAFAFA' : 'white'
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                  <div>
+                    <p style={{ fontSize: 10, color: '#A39680', marginBottom: 4, letterSpacing: 0.5 }}>
+                      TIKET #{idx + 1}
+                    </p>
+                    <p style={{
+                      fontSize: 14, fontFamily: 'monospace', fontWeight: 700,
+                      color: '#262626', letterSpacing: 1.5, marginBottom: 8
+                    }}>
+                      {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
+                    </p>
+                    <p style={{ fontSize: 11, color: '#A39680' }}>
+                      {new Date(selectedTicketOrder.waktu_order).toLocaleDateString('id-ID', {
+                        day: 'numeric', month: 'long', year: 'numeric'
+                      })}
+                    </p>
+                  </div>
+                  <span style={{
+                    fontSize: 11, padding: '4px 10px', borderRadius: 50,
+                    fontWeight: 700,
+                    background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
+                    color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A',
+                    flexShrink: 0
+                  }}>
+                    {t.status_tiket === 'used' ? 'Sudah Dipakai' : 'Valid'}
+                  </span>
+                </div>
+              </div>
+            ))}
+
+            {/* Tombol back */}
+            <button
+              onClick={() => setSelectedTicketOrder(null)}
+              style={{
+                marginTop: 8, width: '100%', padding: '11px',
+                background: 'transparent', color: '#4D403A',
+                border: '1px solid #4D403A', borderRadius: 8,
+                fontSize: 12, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+              }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <polyline points="15 18 9 12 15 6"/>
+              </svg>
+              Kembali
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ── MODAL UPLOAD BUKTI BAYAR ── */}
       {uploadTargetOrder && (
@@ -622,11 +766,11 @@ function Profile() {
               }}>
               {buktiBayarPreview ? (
                 <img src={buktiBayarPreview} alt="bukti"
-                  style={{ maxHeight: 200, borderRadius: 8, objectFit: 'contain' }} />
+                  style={{ maxHeight: 200, width: '100%', borderRadius: 8, objectFit: 'contain' }} />
               ) : uploadTargetOrder.bukti_bayar ? (
                 <div>
                   <img src={uploadTargetOrder.bukti_bayar} alt="bukti lama"
-                    style={{ maxHeight: 140, borderRadius: 8, objectFit: 'contain', opacity: 0.6, marginBottom: 8 }} />
+                    style={{ maxHeight: 140, width: '100%', borderRadius: 8, objectFit: 'contain', opacity: 0.6, marginBottom: 8 }} />
                   <p style={{ fontSize: 11, color: '#A39680' }}>Klik untuk ganti foto bukti</p>
                 </div>
               ) : (
