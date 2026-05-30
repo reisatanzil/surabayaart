@@ -6,6 +6,7 @@ import Reservasi from './pages/customer/reservasi'
 import Detail from './pages/customer/detail'
 import Cart from './pages/customer/cart'
 import Profile from './pages/customer/profile'
+import MyTicket from './pages/customer/myticket'
 import OrganizerDashboard from './pages/organizer/dashboard'
 import UpEvent from './pages/organizer/upevent'
 import OrganizerProfile from './pages/organizer/profile'
@@ -23,6 +24,7 @@ function App() {
         <Route path="/detail/:id" element={<Detail />} />
         <Route path="/cart" element={<Cart />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/my-ticket/:orderId" element={<MyTicket />} />
         <Route path="/organizer/dashboard" element={<OrganizerDashboard />} />
         <Route path="/organizer/upload" element={<UpEvent />} />
         <Route path="/organizer/profile" element={<OrganizerProfile />} />

@@ -140,7 +140,9 @@ function Cart() {
     setUploading(false)
     setShowUpload(false)
     localStorage.removeItem('cart')
-    navigate('/profile')
+    localStorage.setItem('lastOrderId', orderId)
+    // ✅ Redirect ke halaman tiket setelah upload bukti berhasil
+    navigate(`/my-ticket/${orderId}`)
   }
 
   if (!cart || !user) return null
@@ -289,7 +291,12 @@ function Cart() {
               }}>
                 Upload Bukti Pembayaran
               </button>
-              <button onClick={() => { localStorage.removeItem('cart'); navigate('/profile') }} style={{
+              {/* ✅ "Upload nanti" juga diarahkan ke halaman tiket */}
+              <button onClick={() => {
+                localStorage.removeItem('cart')
+                localStorage.setItem('lastOrderId', orderId)
+                navigate(`/my-ticket/${orderId}`)
+              }} style={{
                 width: '100%', padding: '10px',
                 background: 'transparent', color: '#A39680',
                 border: 'none', fontSize: 12,
@@ -356,7 +363,12 @@ function Cart() {
               }}>
                 {uploading ? 'Mengupload...' : 'Kirim Bukti Pembayaran'}
               </button>
-              <button onClick={() => { localStorage.removeItem('cart'); navigate('/profile') }} style={{
+              {/* ✅ "Nanti aja" juga diarahkan ke halaman tiket */}
+              <button onClick={() => {
+                localStorage.removeItem('cart')
+                localStorage.setItem('lastOrderId', orderId)
+                navigate(`/my-ticket/${orderId}`)
+              }} style={{
                 width: '100%', padding: '10px',
                 background: 'transparent', color: '#A39680',
                 border: 'none', fontSize: 12,
