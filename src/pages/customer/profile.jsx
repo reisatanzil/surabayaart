@@ -2,91 +2,6 @@ import { useNavigate } from 'react-router-dom'
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../../supabase'
 
-// Code128B encoder — menghasilkan barcode yang bisa di-scan sesuai id_tiket
-function encodeCode128(text) {
-  const CODE128_B = [
-    '11011001100','11001101100','11001100110','10010011000','10010001100',
-    '10001001100','10011001000','10011000100','10001100100','11001001000',
-    '11001000100','11000100100','10110011100','10011011100','10011001110',
-    '10111001100','10011101100','10011100110','11001110010','11001011100',
-    '11001001110','11011100100','11001110100','11101101110','11101001100',
-    '11100101100','11100100110','11101100100','11100110100','11100110010',
-    '11011011000','11011000110','11000110110','10100011000','10001011000',
-    '10001000110','10110001000','10001101000','10001100010','11010001000',
-    '11000101000','11000100010','10110111000','10110001110','10001101110',
-    '10111011000','10111000110','10001110110','11101110110','11010001110',
-    '11000101110','11011101000','11011100010','11011101110','11101011000',
-    '11101000110','11100010110','11101101000','11101100010','11100011010',
-    '11101111010','11001000010','11110001010','10100110000','10100001100',
-    '10010110000','10010000110','10000101100','10000100110','10110010000',
-    '10110000100','10011010000','10011000010','10000110100','10000110010',
-    '11000010010','11001010000','11110111010','11000010100','10001111010',
-    '10100111100','10010111100','10010011110','10111100100','10011110100',
-    '10011110010','11110100100','11110010100','11110010010','11011011110',
-    '11011110110','11110110110','10101111000','10100011110','10001011110',
-    '10111101000','10111100010','11110101000','11110100010','10111011110',
-    '10111101110','11101011110','11110101110','11010000100','11010010000',
-    '11010011100','1100011101011'
-  ]
-  const START_B = 104
-  const STOP    = 106
-
-  // encode karakter
-  const chars = text.toUpperCase().split('')
-  let checksum = START_B
-  const indices = []
-  chars.forEach((ch, i) => {
-    const code = ch.charCodeAt(0) - 32
-    if (code < 0 || code > 94) return
-    indices.push(code)
-    checksum += code * (i + 1)
-  })
-
-  const bars = [
-    CODE128_B[START_B],
-    ...indices.map(i => CODE128_B[i]),
-    CODE128_B[checksum % 103],
-    CODE128_B[STOP]
-  ].join('')
-
-  return bars
-}
-
-function Barcode({ value }) {
-  const canvasRef = useRef(null)
-
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    const W = canvas.width
-    const H = canvas.height
-
-    ctx.fillStyle = '#fff'
-    ctx.fillRect(0, 0, W, H)
-
-    // Pakai id_tiket asli untuk encode
-    const barStr = encodeCode128(value)
-    const unitW  = W / barStr.length
-
-    ctx.fillStyle = '#1a1a1a'
-    for (let i = 0; i < barStr.length; i++) {
-      if (barStr[i] === '1') {
-        ctx.fillRect(Math.floor(i * unitW), 0, Math.ceil(unitW), H)
-      }
-    }
-  }, [value])
-
-  return (
-    <canvas
-      ref={canvasRef}
-      width={320}
-      height={80}
-      style={{ width: '100%', height: 'auto', display: 'block' }}
-    />
-  )
-}
-
 function Profile() {
   const navigate = useNavigate()
   const [user, setUser] = useState(null)
@@ -100,7 +15,14 @@ function Profile() {
   const [buktiBayar, setBuktiBayar] = useState(null)
   const [buktiBayarPreview, setBuktiBayarPreview] = useState(null)
   const [uploading, setUploading] = useState(false)
-  const [selectedTicket, setSelectedTicket] = useState(null)
+
+  // Review states
+  const [reviewTarget, setReviewTarget] = useState(null) // { order, tiket, jadwal, pergelaran }
+  const [reviewRating, setReviewRating] = useState(0)
+  const [reviewHover, setReviewHover] = useState(0)
+  const [reviewPesan, setReviewPesan] = useState('')
+  const [submittingReview, setSubmittingReview] = useState(false)
+  const [submittedReviews, setSubmittedReviews] = useState({}) // { id_order: true }
 
   useEffect(() => {
     const data = localStorage.getItem('user')
@@ -167,11 +89,72 @@ function Profile() {
       .eq('id_pengguna', id)
       .order('waktu_order', { ascending: false })
 
-    console.log('orderData:', JSON.stringify(orderData, null, 2))
-    console.log('error:', error)
-
     setOrders(orderData || [])
+
+    // Cek review yang sudah pernah dibuat
+    if (orderData && orderData.length > 0) {
+      const orderIds = orderData.map(o => o.id_order)
+      const { data: reviewData } = await supabase
+        .from('review')
+        .select('id_order')
+        .in('id_order', orderIds)
+
+      if (reviewData) {
+        const submitted = {}
+        reviewData.forEach(r => { submitted[r.id_order] = true })
+        setSubmittedReviews(submitted)
+      }
+    }
+
     setLoading(false)
+  }
+
+  // Buka modal review: ambil info jadwal & pergelaran dari tiket pertama order
+  async function bukaModalReview(order) {
+    const tiketPertama = order.tiket?.[0]
+    if (!tiketPertama?.id_jadwal) return
+
+    // Ambil jadwal + pergelaran
+    const { data: jadwal } = await supabase
+      .from('jadwal_event')
+      .select('*, pergelaran(*)')
+      .eq('id_jadwal', tiketPertama.id_jadwal)
+      .single()
+
+    setReviewTarget({ order, jadwal })
+    setReviewRating(0)
+    setReviewHover(0)
+    setReviewPesan('')
+  }
+
+  async function kirimReview() {
+    if (!reviewRating || !reviewTarget) return
+    setSubmittingReview(true)
+
+    const { error } = await supabase.from('review').insert({
+      id_order: reviewTarget.order.id_order,
+      id_pengguna: user.id_pengguna,
+      id_pergelaran: reviewTarget.jadwal?.pergelaran?.id_pergelaran || null,
+      rating: reviewRating,
+      pesan: reviewPesan.trim() || null,
+    })
+
+    if (error) {
+      alert('Gagal mengirim review: ' + error.message)
+    } else {
+      setSubmittedReviews(prev => ({ ...prev, [reviewTarget.order.id_order]: true }))
+      setReviewTarget(null)
+    }
+    setSubmittingReview(false)
+  }
+
+  // Cek apakah event sudah selesai (tanggal jadwal sudah lewat)
+  function eventSudahSelesai(order) {
+    const tiketPertama = order.tiket?.[0]
+    if (!tiketPertama) return false
+    // Kita cek dari waktu_order + fallback ke sekarang
+    // Akan lebih akurat setelah kita ambil jadwal, tapi untuk tombol awal kita cek saja apakah ada tiket
+    return true // akan di-filter lebih lanjut saat modal dibuka
   }
 
   function bukaModalUpload(order) {
@@ -229,6 +212,13 @@ function Profile() {
     o.status_validasi_bayar === 'pending'
   )
   const ordersRejected = orders.filter(o => o.status_validasi_bayar === 'rejected')
+
+  const StarIcon = ({ filled, half }) => (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? '#F5A623' : 'none'}
+      stroke={filled ? '#F5A623' : '#DFD8CE'} strokeWidth="1.5">
+      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+    </svg>
+  )
 
   return (
     <div style={{ fontFamily: 'Albert Sans, sans-serif', background: '#FAFBF5', minHeight: '100vh' }}>
@@ -362,7 +352,6 @@ function Profile() {
           </>
         ) : (
           <>
-
             {/* ── SECTION: MENUNGGU VALIDASI ── */}
             {ordersPending.length > 0 && (
               <div style={{ marginBottom: 28 }}>
@@ -627,216 +616,140 @@ function Profile() {
                   )}
                 </div>
               ) : (
-                ordersApproved.map(order => (
-                  <div key={order.id_order} style={{
-                    background: 'white', borderRadius: 10,
-                    border: '1px solid #e8e4dc', padding: 20, marginBottom: 14
-                  }}>
-                    {/* Header order */}
-                    <div style={{
-                      display: 'flex', justifyContent: 'space-between',
-                      alignItems: 'center', marginBottom: 14,
-                      paddingBottom: 12, borderBottom: '1px solid #f0ece4'
+                ordersApproved.map(order => {
+                  const sudahReview = submittedReviews[order.id_order]
+                  return (
+                    <div key={order.id_order} style={{
+                      background: 'white', borderRadius: 10,
+                      border: '1px solid #e8e4dc', padding: 20, marginBottom: 14
                     }}>
-                      <div>
-                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
-                          {new Date(order.waktu_order).toLocaleDateString('id-ID', {
-                            day: 'numeric', month: 'long', year: 'numeric'
-                          })}
-                        </p>
-                        <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
-                          #{order.id_order.slice(0, 8).toUpperCase()}
-                        </p>
-                      </div>
-                      <div style={{ textAlign: 'right' }}>
-                        <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
-                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
-                        </p>
-                        <span style={{
-                          fontSize: 11, padding: '2px 8px', borderRadius: 50,
-                          fontWeight: 600, background: '#EAF3DE', color: '#27500A'
-                        }}>Tervalidasi ✓</span>
-                      </div>
-                    </div>
-
-                    {/* Info jumlah tiket */}
-                    {order.detail_order?.map(detail => (
-                      <div key={detail.id_detail_order} style={{
+                      {/* Header order */}
+                      <div style={{
                         display: 'flex', justifyContent: 'space-between',
-                        alignItems: 'center', marginBottom: 8
+                        alignItems: 'center', marginBottom: 14,
+                        paddingBottom: 12, borderBottom: '1px solid #f0ece4'
                       }}>
-                        <span style={{ fontSize: 12, color: '#555' }}>
-                          {detail.jumlah} tiket × Rp {(detail.subtotal / detail.jumlah).toLocaleString('id-ID')}
-                        </span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
-                        </span>
+                        <div>
+                          <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>
+                            {new Date(order.waktu_order).toLocaleDateString('id-ID', {
+                              day: 'numeric', month: 'long', year: 'numeric'
+                            })}
+                          </p>
+                          <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
+                            #{order.id_order.slice(0, 8).toUpperCase()}
+                          </p>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
+                            Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                          </p>
+                          <span style={{
+                            fontSize: 11, padding: '2px 8px', borderRadius: 50,
+                            fontWeight: 600, background: '#EAF3DE', color: '#27500A'
+                          }}>Tervalidasi ✓</span>
+                        </div>
                       </div>
-                    ))}
 
-                    {/* List tiket */}
-                    <div style={{ marginTop: 8 }}>
-                      {order.tiket?.length > 0 ? (
-                        order.tiket.map(t => (
-                          <div key={t.id_tiket} style={{
-                            background: '#F5F2ED', borderRadius: 8,
-                            padding: '10px 14px', marginBottom: 8,
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'space-between'
-                          }}>
-                            <div>
-                              <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>ID Tiket</p>
-                              <p style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>
-                                {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
-                              </p>
-                            </div>
-                            <span style={{
-                              fontSize: 11, padding: '3px 10px', borderRadius: 50,
-                              fontWeight: 600,
-                              background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
-                              color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A'
+                      {order.detail_order?.map(detail => (
+                        <div key={detail.id_detail_order} style={{
+                          display: 'flex', justifyContent: 'space-between',
+                          alignItems: 'center', marginBottom: 8
+                        }}>
+                          <span style={{ fontSize: 12, color: '#555' }}>
+                            {detail.jumlah} tiket × Rp {(detail.subtotal / detail.jumlah).toLocaleString('id-ID')}
+                          </span>
+                          <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
+                            Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
+                          </span>
+                        </div>
+                      ))}
+
+                      {/* List tiket */}
+                      <div style={{ marginTop: 8 }}>
+                        {order.tiket?.length > 0 ? (
+                          order.tiket.map(t => (
+                            <div key={t.id_tiket} style={{
+                              background: '#F5F2ED', borderRadius: 8,
+                              padding: '10px 14px', marginBottom: 8,
+                              display: 'flex', alignItems: 'center',
+                              justifyContent: 'space-between'
                             }}>
-                              {t.status_tiket === 'used' ? 'Sudah dipakai' : 'Valid'}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <p style={{ fontSize: 12, color: '#A39680', textAlign: 'center', padding: '8px 0' }}>
-                          Tiket belum tersedia.
-                        </p>
-                      )}
-                    </div>
+                              <div>
+                                <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>ID Tiket</p>
+                                <p style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>
+                                  {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
+                                </p>
+                              </div>
+                              <span style={{
+                                fontSize: 11, padding: '3px 10px', borderRadius: 50,
+                                fontWeight: 600,
+                                background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
+                                color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A'
+                              }}>
+                                {t.status_tiket === 'used' ? 'Sudah dipakai' : 'Valid'}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <p style={{ fontSize: 12, color: '#A39680', textAlign: 'center', padding: '8px 0' }}>
+                            Tiket belum tersedia.
+                          </p>
+                        )}
+                      </div>
 
-                    {/* Tombol lihat e-ticket — buka modal */}
-                    <button
-                      onClick={() => setSelectedTicket(order)}
-                      style={{
-                        marginTop: 10, width: '100%', padding: '9px',
-                        background: 'transparent', color: '#27500A',
-                        border: '1px solid #C6E0A4', borderRadius: 7,
-                        fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                        fontFamily: 'inherit'
-                      }}>
-                      Lihat E-Ticket →
-                    </button>
-                  </div>
-                ))
+                      {/* Tombol aksi */}
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <button
+                          onClick={() => navigate(`/my-ticket/${order.id_order}`)}
+                          style={{
+                            flex: 1, padding: '9px',
+                            background: 'transparent', color: '#27500A',
+                            border: '1px solid #C6E0A4', borderRadius: 7,
+                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                            fontFamily: 'inherit'
+                          }}>
+                          Lihat E-Ticket →
+                        </button>
+
+                        {/* Tombol Review */}
+                        {sudahReview ? (
+                          <div style={{
+                            flex: 1, padding: '9px',
+                            background: '#FAFBF5', border: '1px solid #e8e4dc',
+                            borderRadius: 7, fontSize: 12, color: '#A39680',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5
+                          }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="#F5A623" stroke="#F5A623" strokeWidth="1">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                            Review Terkirim
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => bukaModalReview(order)}
+                            style={{
+                              flex: 1, padding: '9px',
+                              background: '#262626', color: 'white',
+                              border: 'none', borderRadius: 7,
+                              fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                              fontFamily: 'inherit',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5
+                            }}>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                            </svg>
+                            Tulis Review
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  )
+                })
               )}
             </div>
-
           </>
         )}
       </div>
-
-      {/* ── MODAL E-TICKET ── */}
-      {selectedTicket && (
-        <div
-          onClick={() => setSelectedTicket(null)}
-          style={{
-            position: 'fixed', inset: 0,
-            background: 'rgba(38,38,38,0.65)',
-            backdropFilter: 'blur(4px)',
-            display: 'flex', alignItems: 'center',
-            justifyContent: 'center', zIndex: 200, padding: 20
-          }}
-        >
-          <div
-            onClick={e => e.stopPropagation()}
-            style={{
-              background: '#fff', borderRadius: 20,
-              width: '100%', maxWidth: 360,
-              overflow: 'hidden',
-              boxShadow: '0 24px 60px rgba(0,0,0,0.25)',
-              fontFamily: 'Albert Sans, sans-serif',
-              maxHeight: '90vh', overflowY: 'auto'
-            }}
-          >
-            {/* Header hijau */}
-            <div style={{
-              background: '#2d6a4f', padding: '24px 24px 20px',
-              textAlign: 'center', color: '#fff'
-            }}>
-              <div style={{ fontSize: 11, opacity: 0.75, letterSpacing: 2, marginBottom: 6 }}>E-TICKET</div>
-              <div style={{ fontSize: 20, fontWeight: 700, letterSpacing: 1 }}>SurabayArt 2026</div>
-              <div style={{ fontSize: 12, opacity: 0.8, marginTop: 4 }}>
-                {new Date(selectedTicket.waktu_order).toLocaleDateString('id-ID', {
-                  day: 'numeric', month: 'long', year: 'numeric'
-                })}
-              </div>
-            </div>
-
-            {/* Zigzag divider */}
-            <div style={{
-              height: 16,
-              background: `radial-gradient(circle at 50% 0%, #fff 10px, #2d6a4f 10px) 0 0 / 20px 16px repeat-x`
-            }} />
-
-            {/* Body */}
-            <div style={{ padding: '16px 24px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 12 }}>
-                <div>
-                  <div style={{ fontSize: 10, color: '#aaa', letterSpacing: 1, marginBottom: 2 }}>ORDER ID</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', color: '#1a1a1a' }}>
-                    #{selectedTicket.id_order.slice(0, 8).toUpperCase()}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 10, color: '#aaa', letterSpacing: 1, marginBottom: 2 }}>TOTAL</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1a1a1a' }}>
-                    Rp {parseInt(selectedTicket.total_pembayaran).toLocaleString('id-ID')}
-                  </div>
-                </div>
-              </div>
-
-              <div style={{ borderTop: '2px dashed #e0e0e0', margin: '12px 0' }} />
-
-              {/* Per tiket */}
-              {selectedTicket.tiket?.map(t => (
-                <div key={t.id_tiket} style={{
-                  background: '#F5F2ED', borderRadius: 10,
-                  padding: '12px 14px', marginBottom: 10
-                }}>
-                  <div style={{ fontSize: 10, color: '#aaa', letterSpacing: 1, marginBottom: 4 }}>ID TIKET</div>
-                  <div style={{
-                    fontSize: 14, fontFamily: 'monospace', fontWeight: 700,
-                    color: '#2d6a4f', letterSpacing: 2, marginBottom: 10
-                  }}>
-                    {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
-                  </div>
-                  <div style={{ background: '#fff', borderRadius: 8, padding: 10, border: '1px solid #eee' }}>
-                    <Barcode value={t.id_tiket} />
-                  </div>
-                  <div style={{
-                    marginTop: 8, textAlign: 'center', fontSize: 11, fontWeight: 600,
-                    color: t.status_tiket === 'used' ? '#999' : '#27500A'
-                  }}>
-                    {t.status_tiket === 'used' ? '✗ Sudah dipakai' : '✓ Valid'}
-                  </div>
-                </div>
-              ))}
-
-              <div style={{ fontSize: 11, color: '#bbb', textAlign: 'center', marginTop: 4, marginBottom: 4 }}>
-                Tunjukkan barcode ini kepada panitia
-              </div>
-            </div>
-
-            {/* Footer */}
-            <div style={{ padding: '0 24px 20px' }}>
-              <button
-                onClick={() => setSelectedTicket(null)}
-                style={{
-                  width: '100%', padding: '11px',
-                  background: '#f5f5f5', border: 'none',
-                  borderRadius: 10, fontSize: 13,
-                  fontWeight: 600, color: '#555', cursor: 'pointer',
-                  fontFamily: 'Albert Sans, sans-serif'
-                }}>
-                Tutup
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* ── MODAL UPLOAD BUKTI BAYAR ── */}
       {uploadTargetOrder && (
@@ -920,6 +833,143 @@ function Profile() {
             }}>
               Batal
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL REVIEW ── */}
+      {reviewTarget && (
+        <div
+          onClick={() => setReviewTarget(null)}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(38,38,38,0.65)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 100, padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 16,
+              padding: 28, maxWidth: 400, width: '100%',
+              boxShadow: '0 8px 40px rgba(0,0,0,0.18)'
+            }}
+          >
+            {/* Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+              <div>
+                <p style={{ fontSize: 15, fontWeight: 700, color: '#262626', marginBottom: 3 }}>Tulis Review</p>
+                {reviewTarget.jadwal?.pergelaran?.nama_pergelaran && (
+                  <p style={{ fontSize: 12, color: '#A39680' }}>
+                    {reviewTarget.jadwal.pergelaran.nama_pergelaran}
+                  </p>
+                )}
+              </div>
+              <button onClick={() => setReviewTarget(null)} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: '#A39680', fontSize: 18, lineHeight: 1, marginTop: -2
+              }}>✕</button>
+            </div>
+
+            <div style={{
+              height: 1, background: '#f0ece4', margin: '14px 0'
+            }} />
+
+            {/* Cek tanggal event */}
+            {reviewTarget.jadwal?.tanggal_jadwal && new Date(reviewTarget.jadwal.tanggal_jadwal) > new Date() ? (
+              <div style={{
+                background: '#FAEEDA', borderRadius: 10, padding: '16px',
+                textAlign: 'center'
+              }}>
+                <p style={{ fontSize: 24, marginBottom: 8 }}>📅</p>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#633806', marginBottom: 4 }}>
+                  Event Belum Selesai
+                </p>
+                <p style={{ fontSize: 12, color: '#633806', lineHeight: 1.6 }}>
+                  Review bisa ditulis setelah event selesai pada{' '}
+                  <strong>
+                    {new Date(reviewTarget.jadwal.tanggal_jadwal).toLocaleDateString('id-ID', {
+                      day: 'numeric', month: 'long', year: 'numeric'
+                    })}
+                  </strong>
+                </p>
+              </div>
+            ) : (
+              <>
+                {/* Rating bintang */}
+                <div style={{ marginBottom: 18 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#4D403A', marginBottom: 10 }}>
+                    Rating Keseluruhan
+                  </p>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {[1, 2, 3, 4, 5].map(star => (
+                      <button
+                        key={star}
+                        onClick={() => setReviewRating(star)}
+                        onMouseEnter={() => setReviewHover(star)}
+                        onMouseLeave={() => setReviewHover(0)}
+                        style={{
+                          background: 'none', border: 'none',
+                          cursor: 'pointer', padding: 2,
+                          transition: 'transform 0.1s',
+                          transform: reviewHover >= star || reviewRating >= star ? 'scale(1.15)' : 'scale(1)'
+                        }}>
+                        <svg width="30" height="30" viewBox="0 0 24 24"
+                          fill={(reviewHover || reviewRating) >= star ? '#F5A623' : 'none'}
+                          stroke={(reviewHover || reviewRating) >= star ? '#F5A623' : '#DFD8CE'}
+                          strokeWidth="1.5">
+                          <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
+                        </svg>
+                      </button>
+                    ))}
+                  </div>
+                  {reviewRating > 0 && (
+                    <p style={{ fontSize: 11, color: '#A39680', marginTop: 6 }}>
+                      {['', 'Sangat Buruk', 'Buruk', 'Cukup', 'Bagus', 'Sangat Bagus'][reviewRating]}
+                    </p>
+                  )}
+                </div>
+
+                {/* Komentar */}
+                <div style={{ marginBottom: 20 }}>
+                  <p style={{ fontSize: 12, fontWeight: 600, color: '#4D403A', marginBottom: 8 }}>
+                    Komentar <span style={{ fontWeight: 400, color: '#A39680' }}>(opsional)</span>
+                  </p>
+                  <textarea
+                    value={reviewPesan}
+                    onChange={e => setReviewPesan(e.target.value)}
+                    placeholder="Ceritakan pengalamanmu di event ini..."
+                    rows={4}
+                    style={{
+                      width: '100%', padding: '10px 14px',
+                      borderRadius: 8, border: '1px solid #e8e4dc',
+                      fontSize: 13, outline: 'none', color: '#262626',
+                      fontFamily: 'inherit', background: '#FAFBF5',
+                      resize: 'none', boxSizing: 'border-box',
+                      lineHeight: 1.6
+                    }}
+                  />
+                </div>
+
+                <button
+                  onClick={kirimReview}
+                  disabled={!reviewRating || submittingReview}
+                  style={{
+                    width: '100%', padding: '12px',
+                    background: !reviewRating || submittingReview ? '#A39680' : '#262626',
+                    color: 'white', border: 'none', borderRadius: 8,
+                    fontSize: 13, fontWeight: 700,
+                    cursor: !reviewRating || submittingReview ? 'not-allowed' : 'pointer',
+                    fontFamily: 'inherit'
+                  }}>
+                  {submittingReview ? 'Mengirim...' : 'Kirim Review'}
+                </button>
+                <p style={{ fontSize: 11, color: '#A39680', textAlign: 'center', marginTop: 10, lineHeight: 1.5 }}>
+                  Review tidak dapat diubah setelah dikirim.
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}

@@ -105,6 +105,7 @@ function Cart() {
     for (const [id, val] of Object.entries(merchDipilih)) {
       await supabase.from('detail_order').insert({
         id_order: orderData.id_order,
+        id_merchandise: id,
         jumlah: val.jumlah,
         subtotal: val.jumlah * val.harga,
       })

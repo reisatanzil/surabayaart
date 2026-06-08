@@ -136,7 +136,7 @@ function BarChart({ data, accent, barH }) {
   )
 }
 
-// Grafik pertumbuhan 12 bulan terakhir
+// ─── FIX: pakai waktu_order bukan created_at ───────────────────────────────
 function GrowthChart({ orders }) {
   const now = new Date()
   const months = Array.from({ length: 12 }, (_, i) => {
@@ -148,8 +148,8 @@ function GrowthChart({ orders }) {
     }
   })
   orders.forEach(o => {
-    if (!o.created_at) return
-    const d = new Date(o.created_at)
+    if (!o.waktu_order) return
+    const d = new Date(o.waktu_order)
     const m = months.find(x => x.year === d.getFullYear() && x.month === d.getMonth())
     if (m) m.tiket += o.jumlah_item || 0
   })
@@ -184,6 +184,7 @@ function GrowthChart({ orders }) {
   )
 }
 
+// ─── FIX: pakai waktu_order bukan created_at ───────────────────────────────
 function MonthlyChart({ orders, accent }) {
   const now = new Date()
   const months = Array.from({ length: 6 }, (_, i) => {
@@ -191,8 +192,8 @@ function MonthlyChart({ orders, accent }) {
     return { label: d.toLocaleDateString('id-ID', { month: 'short' }), year: d.getFullYear(), month: d.getMonth(), value: 0, highlight: i === 5 }
   })
   orders.forEach(o => {
-    if (!o.created_at) return
-    const d = new Date(o.created_at)
+    if (!o.waktu_order) return
+    const d = new Date(o.waktu_order)
     const m = months.find(x => x.year === d.getFullYear() && x.month === d.getMonth())
     if (m) m.value += 1
   })
@@ -208,13 +209,11 @@ function AdminDashboard() {
   const [loading, setLoading] = useState(true)
   const [hoveredStat, setHoveredStat] = useState(null)
 
-  // Data — nama state sama persis dengan kode lama
   const [pending, setPending] = useState([])
   const [pendingEvents, setPendingEvents] = useState([])
   const [events, setEvents] = useState([])
   const [users, setUsers] = useState([])
 
-  // Data tambahan untuk fitur baru
   const [orders, setOrders] = useState([])
   const [merch, setMerch] = useState([])
   const [detailOrders, setDetailOrders] = useState([])
@@ -225,7 +224,6 @@ function AdminDashboard() {
     totalOrders: 0, totalRevenue: 0, blockedUsers: 0,
   })
 
-  // Review state — sama dengan kode lama
   const [selected, setSelected] = useState(null)
   const [alasan, setAlasan] = useState('')
 
@@ -241,7 +239,6 @@ function AdminDashboard() {
   async function ambilSemua() {
     setLoading(true)
 
-    // Query inti — sama persis kode lama
     const [p, pe, e, u, org] = await Promise.all([
       supabase.from('penyelenggara').select('*, pengguna(*)').eq('status', 'pending'),
       supabase.from('pergelaran').select('*, penyelenggara(instansi_penyelenggara)').eq('status_validasi', false),
@@ -261,20 +258,34 @@ function AdminDashboard() {
     setEvents(eData)
     setUsers(uData)
 
-    // Query tambahan — kalau gagal tidak merusak data inti
-    const [o, m, do_] = await Promise.all([
-      supabase.from('order').select('*').order('created_at', { ascending: false }),
-      supabase.from('merchandise').select('*'),
-      supabase.from('detail_order').select('*, merchandise(nama_merchandise, foto_merchandise, harga_merchandise), pergelaran(nama_pergelaran)'),
-    ])
+    // ─── FIX: query terpisah biar error satu tidak ganggu yang lain ───────
+    const o   = await supabase
+      .from('order')
+      .select('*, pengguna(nama_pengguna, email_pengguna)')
+      .eq('status_validasi_bayar', 'approved')
+      .order('waktu_order', { ascending: false })
+
+    const m   = await supabase
+      .from('merchandise')
+      .select('*')
+
+    // ─── FIX: filter detail_order yang punya id_merchandise (pembelian merch) ─
+    const do_ = await supabase
+      .from('detail_order')
+      .select('*, merchandise(nama_merchandise, foto_merchandise, harga_merchandise)')
+      .not('id_merchandise', 'is', null)
 
     const oData  = o.data   || []
     const mData  = m.data   || []
     const doData = do_.data || []
 
+    // Ambil detail_order yg approved — filter berdasarkan id_order yang ada di oData
+    const approvedOrderIds = new Set(oData.map(ord => ord.id_order))
+    const doDataFiltered = doData.filter(d => approvedOrderIds.has(d.id_order))
+
     setOrders(oData)
     setMerch(mData)
-    setDetailOrders(doData)
+    setDetailOrders(doDataFiltered)
 
     setStats({
       totalUsers:        uData.length,
@@ -291,7 +302,6 @@ function AdminDashboard() {
     setLoading(false)
   }
 
-  // Fungsi aksi — identik dengan kode lama
   async function approveOrg(id) {
     await supabase.from('penyelenggara').update({ status: 'active' }).eq('id_penyelenggara', id)
     setSelected(null); ambilSemua()
@@ -327,8 +337,8 @@ function AdminDashboard() {
     { label: 'Total Organizer',   value: stats.totalOrganizers,        accent: '#2e7d32', sub: stats.pendingOrganizers + ' menunggu validasi',                                 to: 'validate-organizer' },
     { label: 'Total Event',       value: stats.totalEvents,            accent: '#6a1b9a', sub: stats.pendingEvents + ' pending · ' + stats.activeEvents + ' tayang',          to: 'monitoring-event' },
     { label: 'Event Aktif',       value: stats.activeEvents,           accent: '#00897b', sub: 'Sedang tayang',                                                                to: 'monitoring-event' },
-    { label: 'Total Transaksi',   value: stats.totalOrders,            accent: '#e65100', sub: 'Order masuk',                                                                  to: null },
-    { label: 'Total Pendapatan',  value: formatRp(stats.totalRevenue), accent: '#4D403A', sub: 'Semua transaksi', isText: true,                                                to: null },
+    { label: 'Total Transaksi',   value: stats.totalOrders,            accent: '#e65100', sub: 'Order disetujui',                                                              to: null },
+    { label: 'Total Pendapatan',  value: formatRp(stats.totalRevenue), accent: '#4D403A', sub: 'Dari transaksi approved', isText: true,                                        to: null },
     { label: 'Organizer Pending', value: stats.pendingOrganizers,      accent: '#c62828', sub: 'Perlu divalidasi', urgent: stats.pendingOrganizers > 0,                        to: 'validate-organizer' },
     { label: 'Event Pending',     value: stats.pendingEvents,          accent: '#f57f17', sub: 'Perlu tindakan',  urgent: stats.pendingEvents > 0,                             to: 'validate-event' },
   ]
@@ -353,8 +363,7 @@ function AdminDashboard() {
     'merch-sales':        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 2L3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4z"/><line x1="3" y1="6" x2="21" y2="6"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>,
   }
 
-  // Pisah user berdasarkan role untuk monitoring user
-  const regularUsers  = users.filter(u => u.role_pengguna !== 'organizer')
+  const regularUsers   = users.filter(u => u.role_pengguna !== 'organizer')
   const organizerUsers = users.filter(u => u.role_pengguna === 'organizer')
 
   if (!user) return null
@@ -465,19 +474,17 @@ function AdminDashboard() {
                     </div>
                   </div>
 
-                  {/* GROWTH CHART — 12 bulan */}
                   <div style={{ background: 'white', borderRadius: 10, padding: '18px 18px 14px', marginBottom: 14 }}>
                     <div style={S.chartTitle}>Pertumbuhan Transaksi (12 Bulan Terakhir)</div>
                     <GrowthChart orders={orders} />
                     <div style={{ display: 'flex', gap: 16, marginTop: 8 }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                         <div style={{ width: 10, height: 10, borderRadius: 2, background: '#4D403A' }} />
-                        <span style={{ fontSize: 11, color: '#555' }}>Total item terjual</span>
+                        <span style={{ fontSize: 11, color: '#555' }}>Total item terjual (approved)</span>
                       </div>
                     </div>
                   </div>
 
-                  {/* PENDING EVENT PANEL */}
                   <div style={S.overviewPanel}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 12 }}>Event Menunggu Validasi</div>
                     {pendingEvents.length === 0
@@ -573,12 +580,11 @@ function AdminDashboard() {
                 </div>
               )}
 
-              {/* ── MONITORING USER — dibagi dua: Buyer & Organizer ── */}
+              {/* ── MONITORING USER ── */}
               {menu === 'monitoring-user' && (
                 <div style={S.card}>
                   <div style={S.cardTitle}>Monitoring User</div>
 
-                  {/* SECTION: ORGANIZER */}
                   <div style={S.groupHeader}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2">
                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -612,7 +618,6 @@ function AdminDashboard() {
                     ))
                   }
 
-                  {/* SECTION: USER BIASA (buyer) */}
                   <div style={{ ...S.groupHeader, marginTop: 20 }}>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2">
                       <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
@@ -677,7 +682,7 @@ function AdminDashboard() {
               {/* ── TICKET SALES ── */}
               {menu === 'ticket-sales' && (
                 <div style={S.card}>
-                  <div style={S.cardTitle}>Penjualan Tiket per Bulan</div>
+                  <div style={S.cardTitle}>Penjualan Tiket (Pembayaran Disetujui)</div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
                     <div style={{ background: '#F5F2ED', borderRadius: 8, padding: '14px 16px' }}>
                       <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL TIKET TERJUAL</p>
@@ -686,7 +691,7 @@ function AdminDashboard() {
                       </p>
                     </div>
                     <div style={{ background: '#F5F2ED', borderRadius: 8, padding: '14px 16px' }}>
-                      <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL PENDAPATAN TIKET</p>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL PENDAPATAN</p>
                       <p style={{ fontSize: 22, fontWeight: 800, color: '#3B6D11' }}>
                         {formatRp(orders.reduce((s, o) => s + (o.total_pembayaran || 0), 0))}
                       </p>
@@ -695,23 +700,24 @@ function AdminDashboard() {
                   <div style={S.chartTitle}>Transaksi per Bulan</div>
                   <MonthlyChart orders={orders} accent="#4D403A" />
                   <div style={{ marginTop: 20 }}>
-                    <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 12 }}>Semua Transaksi</p>
+                    <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 12 }}>Semua Transaksi Disetujui</p>
                     {orders.length === 0
-                      ? <div style={S.empty}>Belum ada transaksi.</div>
+                      ? <div style={S.empty}>Belum ada transaksi yang disetujui.</div>
                       : orders.map(o => (
                         <div key={o.id_order} style={{ ...S.rowItem, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
                             <p style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A' }}>
                               #{o.id_order?.slice(0, 8).toUpperCase()}
                             </p>
-                            <p style={{ fontSize: 11, color: '#A39680', marginTop: 2 }}>{formatDate(o.created_at)}</p>
+                            <p style={{ fontSize: 11, color: '#A39680', marginTop: 2 }}>
+                              {o.pengguna?.nama_pengguna || '-'}
+                            </p>
+                            <p style={{ fontSize: 11, color: '#A39680' }}>{formatDate(o.waktu_order)}</p>
                             <p style={{ fontSize: 11, color: '#A39680' }}>{o.jumlah_item} item</p>
                           </div>
                           <div style={{ textAlign: 'right' }}>
                             <p style={{ fontSize: 13, fontWeight: 700, color: '#262626' }}>{formatRp(o.total_pembayaran)}</p>
-                            <span style={S.badge(o.status_pembayaran ? '#27500A' : '#633806', o.status_pembayaran ? '#EAF3DE' : '#FAEEDA')}>
-                              {o.status_pembayaran ? 'Lunas' : 'Menunggu'}
-                            </span>
+                            <span style={S.badge('#27500A', '#EAF3DE')}>Approved</span>
                           </div>
                         </div>
                       ))
@@ -725,30 +731,27 @@ function AdminDashboard() {
                 <div style={S.card}>
                   <div style={S.cardTitle}>Penjualan Merchandise</div>
 
-                  {/* STAT CARDS */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 20 }}>
                     <div style={{ background: '#F5F2ED', borderRadius: 8, padding: '14px 16px' }}>
                       <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL MERCHANDISE</p>
                       <p style={{ fontSize: 28, fontWeight: 800, color: '#4D403A' }}>{merch.length}</p>
                     </div>
                     <div style={{ background: '#F5F2ED', borderRadius: 8, padding: '14px 16px' }}>
-                      <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL STOK TERSEDIA</p>
+                      <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', marginBottom: 6 }}>TOTAL TERJUAL (APPROVED)</p>
                       <p style={{ fontSize: 28, fontWeight: 800, color: '#3B6D11' }}>
-                        {merch.reduce((s, m) => s + (m.stok_merchandise || 0), 0)}
+                        {detailOrders.reduce((s, d) => s + (d.jumlah || 0), 0)}
                       </p>
                     </div>
                   </div>
 
-                  {/* DAFTAR MERCHANDISE */}
                   <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 12 }}>Semua Merchandise</p>
                   {merch.length === 0
                     ? <div style={S.empty}>Belum ada merchandise.</div>
                     : merch.map(m => {
-                        // Transaksi yang terkait merchandise ini
                         const relatedTx = detailOrders.filter(d => d.id_merchandise === m.id_merchandise)
+                        const totalTerjual = relatedTx.reduce((s, d) => s + (d.jumlah || 0), 0)
                         return (
                           <div key={m.id_merchandise} style={{ ...S.rowItem, marginBottom: 14 }}>
-                            {/* INFO MERCHANDISE */}
                             <div style={{ display: 'flex', gap: 14, alignItems: 'center' }}>
                               {m.foto_merchandise && (
                                 <img src={m.foto_merchandise} alt={m.nama_merchandise}
@@ -757,21 +760,23 @@ function AdminDashboard() {
                               <div style={{ flex: 1 }}>
                                 <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 3 }}>{m.nama_merchandise}</p>
                                 <p style={{ fontSize: 12, color: '#A39680', marginBottom: 2 }}>{m.deskripsi_merchandise}</p>
-                                <p style={{ fontSize: 12, color: '#A39680' }}>Stok: {m.stok_merchandise}</p>
+                                <p style={{ fontSize: 12, color: '#A39680' }}>Stok tersisa: {m.stok_merchandise}</p>
                               </div>
                               <div style={{ textAlign: 'right', flexShrink: 0 }}>
                                 <p style={{ fontSize: 14, fontWeight: 700, color: '#4D403A' }}>{formatRp(m.harga_merchandise)}</p>
                                 <p style={{ fontSize: 11, color: '#A39680', marginTop: 3 }}>
-                                  {relatedTx.length} transaksi
+                                  Terjual: {totalTerjual} pcs
+                                </p>
+                                <p style={{ fontSize: 11, color: '#3B6D11', fontWeight: 600, marginTop: 2 }}>
+                                  {formatRp(totalTerjual * (m.harga_merchandise || 0))}
                                 </p>
                               </div>
                             </div>
 
-                            {/* TRANSAKSI TERKAIT */}
                             {relatedTx.length > 0 && (
                               <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px dashed #e8e4dc' }}>
                                 <p style={{ fontSize: 11, fontWeight: 700, color: '#888', marginBottom: 8, letterSpacing: 0.5 }}>
-                                  RIWAYAT TRANSAKSI
+                                  RIWAYAT TRANSAKSI (APPROVED)
                                 </p>
                                 {relatedTx.map((d, idx) => (
                                   <div key={idx} style={{
@@ -779,15 +784,15 @@ function AdminDashboard() {
                                     padding: '7px 10px', background: '#FAF7F2', borderRadius: 6, marginBottom: 5
                                   }}>
                                     <div>
-                                      <p style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                                        {d.pergelaran?.nama_pergelaran || 'Event tidak diketahui'}
+                                      <p style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 600 }}>
+                                        #{d.id_order?.slice(0, 8).toUpperCase()}
                                       </p>
                                       <p style={{ fontSize: 11, color: '#A39680', marginTop: 2 }}>
-                                        Qty: {d.jumlah_item || d.quantity || 1}
+                                        Qty: {d.jumlah || 1}
                                       </p>
                                     </div>
                                     <p style={{ fontSize: 12, fontWeight: 700, color: '#4D403A' }}>
-                                      {formatRp((d.jumlah_item || d.quantity || 1) * (m.harga_merchandise || 0))}
+                                      {formatRp((d.jumlah || 1) * (m.harga_merchandise || 0))}
                                     </p>
                                   </div>
                                 ))}
