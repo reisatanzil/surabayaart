@@ -81,13 +81,18 @@ function MyTicket() {
 
         .barcode-text {
           font-family: 'Libre Barcode 128', cursive;
-          font-size: 64px;
+          font-size: 70px;
           line-height: 1;
           color: #262626;
           letter-spacing: 0;
           display: block;
           text-align: center;
           user-select: none;
+          width: 100%;
+          max-width: 100%;
+          overflow: hidden;
+          white-space: nowrap;
+          box-sizing: border-box;
         }
 
         .barcode-id {
@@ -288,11 +293,12 @@ function MyTicket() {
                   <div style={{
                     background: '#FAFBF5', borderRadius: 8,
                     border: '1px solid #e8e4dc',
-                    padding: '16px 12px 8px',
-                    textAlign: 'center'
+                    padding: '24px 12px 20px',
+                    textAlign: 'center',
+                    overflow: 'hidden'
                   }}>
                     <span className="barcode-text">
-                      {t.id_tiket.replace(/-/g, '')}
+                      {(t.id_tiket.slice(0, 8) + t.id_tiket.slice(9, 13)).toUpperCase()}
                     </span>
                     <p className="barcode-id">
                       {t.id_tiket.toUpperCase()}
