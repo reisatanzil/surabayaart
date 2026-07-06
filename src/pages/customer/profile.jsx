@@ -979,7 +979,7 @@ function Profile() {
         borderTop: '1px solid #e8e4dc', padding: '16px 32px',
         display: 'flex', justifyContent: 'space-between', marginTop: 20
       }}>
-        <span style={{ fontSize: 12, color: '#4D403A', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
+        <span onClick={() => navigate('/terms')} style={{ fontSize: 12, color: '#4D403A', fontWeight: 600, textDecoration: 'underline', cursor: 'pointer' }}>
           Terms & Condition
         </span>
         <span style={{ fontSize: 11, color: '#A39680' }}>

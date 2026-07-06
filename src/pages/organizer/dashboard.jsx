@@ -135,104 +135,136 @@ function OrganizerDashboard() {
     ambilData(u.id_pengguna)
   }, [])
 
-  async function ambilData(idPengguna) {
+async function ambilData(idPengguna) {
     setLoading(true)
-    
-    // 1. Ambil data penyelenggara
-    const { data: org } = await supabase
-      .from('penyelenggara')
-      .select('*')
-      .eq('id_pengguna', idPengguna)
-      .single()
-    if (!org) { setLoading(false); return }
-    setPenyelenggara(org)
+    try {
+      // 1. Ambil data penyelenggara berdasarkan user login
+      const { data: org, error: orgErr } = await supabase
+        .from('penyelenggara')
+        .select('*')
+        .eq('id_pengguna', idPengguna)
+        .single()
+      
+      if (orgErr || !org) { 
+        setLoading(false)
+        return 
+      }
+      setPenyelenggara(org)
 
-    // 2. Ambil semua event milik organizer ini
-    const { data: eventsData } = await supabase
-      .from('pergelaran')
-      .select('*')
-      .eq('id_penyelenggara', org.id_penyelenggara)
-    const ev = eventsData || []
+      // 2. Ambil semua event milik penyelenggara ini
+      const { data: eventsData, error: evErr } = await supabase
+        .from('pergelaran')
+        .select('*')
+        .eq('id_penyelenggara', org.id_penyelenggara)
+      
+      const ev = eventsData || []
+      const eventIds = ev.map(e => e.id_pergelaran)
 
-    // 3. Ambil jadwal_event untuk dapat id_jadwal tiap event
-    const eventIds = ev.map(e => e.id_pergelaran)
-    let jadwals = []
-    if (eventIds.length > 0) {
-      const { data: jd } = await supabase
+      if (eventIds.length === 0) {
+        setEvents([])
+        setLoading(false)
+        return
+      }
+
+      // 3. Ambil jadwal_event berdasarkan eventIds
+      const { data: jd, error: jdErr } = await supabase
         .from('jadwal_event')
         .select('id_jadwal, id_pergelaran')
         .in('id_pergelaran', eventIds)
-      jadwals = jd || []
-    }
+      
+      const jadwals = jd || []
+      const jadwalIds = jadwals.map(j => j.id_jadwal)
 
-    // 4. Ambil tiket berdasarkan jadwal_event
-    const jadwalIds = jadwals.map(j => j.id_jadwal)
-    let tiketsData = []
-    if (jadwalIds.length > 0) {
-      const { data: tk } = await supabase
-        .from('tiket')
-        .select('id_tiket, id_jadwal, status_tiket, id_order, created_at')
-        .in('id_jadwal', jadwalIds)
-      tiketsData = tk || []
-    }
-
-    // 5. Ambil order untuk hitung pendapatan tiket
-    const orderIds = [...new Set(tiketsData.map(t => t.id_order).filter(Boolean))]
-    let ordersData = []
-    if (orderIds.length > 0) {
-      const { data: od } = await supabase
-        .from('order')
-        .select('id_order, total_pembayaran, status_pembayaran, created_at')
-        .in('id_order', orderIds)
-      ordersData = od || []
-    }
-
-    // 6. Ambil detail_order untuk merch (join ke pergelaran via id_pergelaran)
-    let detailData = []
-    if (eventIds.length > 0) {
-      const { data: dd } = await supabase
-        .from('detail_order')
-        .select('*, merchandise(nama_merchandise, harga_merchandise, foto_merchandise)')
-        .in('id_pergelaran', eventIds)
-      detailData = dd || []
-    }
-
-    // Hitung tiket terjual per event
-    const jadwalToEvent = {}
-    jadwals.forEach(j => { jadwalToEvent[j.id_jadwal] = j.id_pergelaran })
-    const eventsWithStats = ev.map(e => {
-      const jadwalEvent = jadwals.filter(j => j.id_pergelaran === e.id_pergelaran).map(j => j.id_jadwal)
-      const tiketEvent  = tiketsData.filter(t => jadwalEvent.includes(t.id_jadwal))
-      return {
-        ...e,
-        tiketTerjual: tiketEvent.filter(t => t.status_tiket === 'sold' || t.id_order).length,
-        tiketTotal:   tiketEvent.length,
+      // 4. Ambil semua tiket berdasarkan jadwalIds
+      let tiketsData = []
+      if (jadwalIds.length > 0) {
+        const { data: tk, error: tkErr } = await supabase
+          .from('tiket')
+          .select('id_tiket, id_jadwal, status_tiket, id_order')
+          .in('id_jadwal', jadwalIds)
+        if (!tkErr) tiketsData = tk || []
       }
-    })
 
-    const totalTiketTerjual = eventsWithStats.reduce((s, e) => s + e.tiketTerjual, 0)
-    const totalPendapatan   = ordersData
-      .filter(o => o.status_pembayaran)
-      .reduce((s, o) => s + (o.total_pembayaran || 0), 0)
-    const totalMerch        = detailData.reduce((s, d) => s + (d.jumlah || 0), 0)
-    const pendapatanMerch   = detailData.reduce((s, d) => s + (d.subtotal || 0), 0)
+      // Kumpulkan semua id_order yang unik dan tidak null dari tabel tiket kamu
+      const orderIdsFromTiket = [...new Set(tiketsData.map(t => t.id_order).filter(Boolean))]
 
-    setEvents(eventsWithStats)
-    setTikets(tiketsData.map(t => ({
-      ...t,
-      created_at: ordersData.find(o => o.id_order === t.id_order)?.created_at || null
-    })))
-    setDetailOrders(detailData)
-    setStats({
-      total:            ev.length,
-      approved:         ev.filter(e => e.status_validasi === true).length,
-      pending:          ev.filter(e => e.status_validasi === false).length,
-      totalTiket:       totalTiketTerjual,
-      totalPendapatan,
-      totalMerch,
-      pendapatanMerch,
-    })
-    setLoading(false)
+      let validDetails = []
+      let approvedOrderIds = new Set()
+      let waktuOrderMap = new Map()
+
+      if (orderIdsFromTiket.length > 0) {
+        // 5. Ambil SEMUA order yang terkait tiket ini (bukan cuma approved), biar waktu_order & pendapatan tiket
+        // ikut logic profile.jsx: tiket dianggap "terjual" apapun status order-nya
+        const { data: allOrders } = await supabase
+          .from('order')
+          .select('id_order, status_validasi_bayar, waktu_order')
+          .in('id_order', orderIdsFromTiket)
+
+        const validOrders = allOrders || []
+        // approvedOrderIds masih dipakai khusus untuk hitung pendapatan merchandise (belum diminta diubah)
+        approvedOrderIds = new Set(validOrders.filter(o => o.status_validasi_bayar === 'approved').map(o => o.id_order))
+
+        // Map id_order -> waktu_order, dipakai buat gantiin created_at di tabel tiket (kolom itu tidak ada di tabel tiket)
+        waktuOrderMap = new Map(validOrders.map(o => [o.id_order, o.waktu_order]))
+
+        // 6. Ambil detail_order berdasarkan id_order yang terhubung dengan tiket kita
+        const { data: detailData } = await supabase
+          .from('detail_order')
+          .select('id_detail_order, id_order, jumlah, subtotal, id_merchandise')
+          .in('id_order', orderIdsFromTiket)
+        
+        validDetails = detailData || []
+      }
+
+      // 7. PROSES HITUNG STATISTIK UTAMA DI FRONTEND (Aman & Anti Gagal)
+      // Filter detail_order yang order-nya approved, khusus dipakai untuk hitung merchandise
+      const approvedDetails = validDetails.filter(d => approvedOrderIds.has(d.id_order))
+
+      // HITUNG PENDAPATAN & PCS MERCHANDISE: dari detail_order yang id_merchandise tidak null (tetap pakai order approved)
+      const approvedMerch   = approvedDetails.filter(d => d.id_merchandise !== null)
+      const totalMerch      = approvedMerch.reduce((sum, item) => sum + (Number(item.jumlah) || 0), 0)
+      const pendapatanMerch = approvedMerch.reduce((sum, item) => sum + (Number(item.subtotal) || 0), 0)
+
+      // Hitung kuantitas fisik tiket terjual per event untuk tabel bawah
+      // Ikut logic profile.jsx (ambilSales): SEMUA baris tiket dihitung "terjual", apapun status order-nya
+      const eventsWithStats = ev.map(e => {
+        const jadwalEvent = jadwals.filter(j => j.id_pergelaran === e.id_pergelaran).map(j => j.id_jadwal)
+        const tiketEvent  = tiketsData.filter(t => jadwalEvent.includes(t.id_jadwal))
+        return {
+          ...e,
+          tiketTerjual: tiketEvent.length,
+          tiketTotal:   tiketEvent.length,
+        }
+      })
+
+      const totalTiketTerjual = eventsWithStats.reduce((sum, e) => sum + e.tiketTerjual, 0)
+
+      // HITUNG PENDAPATAN TIKET: ikut logic profile.jsx (jumlah tiket terjual x harga_tiket per event),
+      // bukan dari subtotal detail_order
+      const totalPendapatan = eventsWithStats.reduce(
+        (sum, e) => sum + (e.tiketTerjual * (Number(e.harga_tiket) || 0)), 0
+      )
+
+      // 8. UPDATE STATE KE REACT UI DASHBOARD
+      setEvents(eventsWithStats)
+      // created_at diambil dari waktu_order (tabel order), karena tabel tiket tidak punya kolom created_at
+      setTikets(tiketsData.map(t => ({ ...t, created_at: waktuOrderMap.get(t.id_order) || null })))
+      setDetailOrders(validDetails)
+      setStats({
+        total:            ev.length,
+        approved:         ev.filter(e => e.status_validasi === true).length,
+        pending:          ev.filter(e => e.status_validasi === false).length,
+        totalTiket:       totalTiketTerjual,
+        totalPendapatan,
+        totalMerch,
+        pendapatanMerch,
+      })
+
+    } catch (err) {
+      console.error("Dashboard mendadak error:", err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const formatRp = val => 'Rp ' + Number(val || 0).toLocaleString('id-ID')
@@ -429,7 +461,7 @@ function OrganizerDashboard() {
         borderTop: '1px solid #e8e4dc', padding: '16px 32px',
         display: 'flex', justifyContent: 'space-between',
         alignItems: 'center', marginTop: 40      }}>
-        <span style={{ fontSize: 12, color: '#4D403A', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}>
+        <span onClick={() => navigate('/terms')} style={{ fontSize: 12, color: '#4D403A', cursor: 'pointer', fontWeight: 600, textDecoration: 'underline' }}>
           Terms & Condition
         </span>
         <span style={{ fontSize: 11, color: '#A39680' }}>
