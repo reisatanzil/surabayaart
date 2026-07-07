@@ -170,7 +170,7 @@ function Cart() {
         position: 'sticky', top: 0, zIndex: 10
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <img src="/logo.png" alt="logo" style={{ width: 40, height: 40, objectFit: 'contain' }} />
+          <img src="/logo.jpg" alt="logo" style={{ width: 40, height: 40, objectFit: 'contain' }} />
           <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2 }}>
             SURABAYA <span style={{ fontWeight: 400, color: '#555' }}>ART</span>
           </div>
