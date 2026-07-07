@@ -241,7 +241,7 @@ function AdminDashboard() {
 
     const [p, pe, e, u, org] = await Promise.all([
       supabase.from('penyelenggara').select('*, pengguna(*)').eq('status', 'pending'),
-      supabase.from('pergelaran').select('*, penyelenggara(instansi_penyelenggara)').eq('status_validasi', false),
+      supabase.from('pergelaran').select('*, penyelenggara(instansi_penyelenggara)').eq('status_validasi', 'menunggu'),
       supabase.from('pergelaran').select('*, penyelenggara(instansi_penyelenggara)'),
       supabase.from('pengguna').select('*').neq('role_pengguna', 'admin'),
       supabase.from('penyelenggara').select('*'),
@@ -293,7 +293,7 @@ function AdminDashboard() {
       totalEvents:       eData.length,
       pendingOrganizers: pData.length,
       pendingEvents:     peData.length,
-      activeEvents:      eData.filter(x => x.status_validasi).length,
+      activeEvents:      eData.filter(x => x.status_validasi === 'disetujui').length,
       totalOrders:       oData.length,
       totalRevenue:      oData.reduce((s, r) => s + (r.total_pembayaran || 0), 0),
       blockedUsers:      uData.filter(x => x.status === 'blocked').length,
@@ -312,16 +312,16 @@ function AdminDashboard() {
     setSelected(null); setAlasan(''); ambilSemua()
   }
   async function approveEvent(id) {
-    await supabase.from('pergelaran').update({ status_validasi: true }).eq('id_pergelaran', id)
+    await supabase.from('pergelaran').update({ status_validasi: 'disetujui', alasan_ditolak: null }).eq('id_pergelaran', id)
     setSelected(null); ambilSemua()
   }
   async function rejectEvent(id) {
     if (!alasan) { alert('isi alasan penolakan dulu!'); return }
-    await supabase.from('pergelaran').update({ status_validasi: false }).eq('id_pergelaran', id)
+    await supabase.from('pergelaran').update({ status_validasi: 'ditolak', alasan_ditolak: alasan }).eq('id_pergelaran', id)
     setSelected(null); setAlasan(''); ambilSemua()
   }
   async function takeDown(id) {
-    await supabase.from('pergelaran').update({ status_validasi: false }).eq('id_pergelaran', id)
+    await supabase.from('pergelaran').update({ status_validasi: 'dibatalkan' }).eq('id_pergelaran', id)
     ambilSemua()
   }
   async function blokirUser(id) {
@@ -664,12 +664,24 @@ function AdminDashboard() {
                           <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 3 }}>{e.nama_pergelaran}</p>
                           <p style={{ fontSize: 12, color: '#A39680' }}>{e.penyelenggara?.instansi_penyelenggara}</p>
                           <p style={{ fontSize: 12, color: '#A39680' }}>{e.lokasi_pergelaran}</p>
+                          {e.status_validasi === 'ditolak' && e.alasan_ditolak && (
+                            <p style={{ fontSize: 11, color: '#A32D2D', marginTop: 4 }}>
+                              <strong>Alasan:</strong> {e.alasan_ditolak}
+                            </p>
+                          )}
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={S.badge(e.status_validasi ? '#27500A' : '#A32D2D', e.status_validasi ? '#EAF3DE' : '#FCEBEB')}>
-                            {e.status_validasi ? 'Tayang' : 'Tidak Tayang'}
-                          </span>
-                          {e.status_validasi && (
+                          {(() => {
+                            const badgeMap = {
+                              disetujui:  { color: '#27500A', bg: '#EAF3DE', label: 'Tayang' },
+                              menunggu:   { color: '#633806', bg: '#FAEEDA', label: 'Menunggu Validasi' },
+                              ditolak:    { color: '#A32D2D', bg: '#FCEBEB', label: 'Ditolak' },
+                              dibatalkan: { color: '#4D403A', bg: '#EDEAE4', label: 'Dibatalkan' },
+                            }
+                            const b = badgeMap[e.status_validasi] || badgeMap['menunggu']
+                            return <span style={S.badge(b.color, b.bg)}>{b.label}</span>
+                          })()}
+                          {e.status_validasi === 'disetujui' && (
                             <button style={S.btnBlock} onClick={() => takeDown(e.id_pergelaran)}>Take Down</button>
                           )}
                         </div>

@@ -26,11 +26,24 @@ function Reservasi() {
         *,
         penyelenggara (
           instansi_penyelenggara
+        ),
+        jadwal_event (
+          tanggal,
+          tanggal_selesai
         )
       `)
-      .eq('status_validasi', true)
+      .eq('status_validasi', 'disetujui')
 
-    if (!error) setEvents(data)
+    if (!error) {
+      const today = new Date().toISOString().split('T')[0]
+      const upcoming = (data || []).filter(e => {
+        const jadwal = Array.isArray(e.jadwal_event) ? e.jadwal_event[0] : e.jadwal_event
+        if (!jadwal) return true // belum ada jadwal diisi, tetap tampilkan
+        const akhirTayang = jadwal.tanggal_selesai || jadwal.tanggal
+        return akhirTayang >= today
+      })
+      setEvents(upcoming)
+    }
     setLoading(false)
   }
 

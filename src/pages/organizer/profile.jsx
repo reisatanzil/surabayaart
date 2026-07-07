@@ -253,6 +253,11 @@ function OrganizerProfile() {
       approved: { bg: '#EAF3DE', color: '#27500A', label: 'Disetujui' },
       rejected: { bg: '#FDECEA', color: '#7B1A1A', label: 'Ditolak' },
       pending:  { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
+      // status event (pergelaran)
+      disetujui:  { bg: '#EAF3DE', color: '#27500A', label: 'Disetujui' },
+      menunggu:   { bg: '#FAEEDA', color: '#633806', label: 'Menunggu Persetujuan' },
+      ditolak:    { bg: '#FDECEA', color: '#7B1A1A', label: 'Ditolak' },
+      dibatalkan: { bg: '#EDEAE4', color: '#4D403A', label: 'Dibatalkan' },
     }
     const s = map[status] || map['pending']
     return (
@@ -453,13 +458,16 @@ function OrganizerProfile() {
                   <div style={{ flex: 1 }}>
                     <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 3 }}>{e.nama_pergelaran}</p>
                     <p style={{ fontSize: 12, color: '#A39680', marginBottom: 4 }}>{e.lokasi_pergelaran}</p>
-                    <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 50, fontWeight: 600, background: e.status_validasi ? '#EAF3DE' : '#FAEEDA', color: e.status_validasi ? '#27500A' : '#633806' }}>
-                      {e.status_validasi ? 'Disetujui' : 'Menunggu Persetujuan'}
-                    </span>
+                    <StatusBadge status={e.status_validasi || 'menunggu'} />
+                    {e.status_validasi === 'ditolak' && e.alasan_ditolak && (
+                      <p style={{ fontSize: 11, color: '#7B1A1A', marginTop: 5, lineHeight: 1.5 }}>
+                        <strong>Alasan ditolak:</strong> {e.alasan_ditolak}
+                      </p>
+                    )}
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0 }}>
                     <button onClick={() => { setEditForm(e); setEditMode(true) }} style={{ padding: '6px 14px', background: '#FAFBF5', border: '1px solid #e8e4dc', borderRadius: 6, fontSize: 12, cursor: 'pointer', color: '#4D403A', fontFamily: 'inherit' }}>Edit</button>
-                    {e.status_validasi && (
+                    {e.status_validasi === 'disetujui' && (
                       <button onClick={() => ambilOrders(e)} style={{ padding: '6px 14px', background: '#4D403A', border: 'none', borderRadius: 6, fontSize: 12, cursor: 'pointer', color: 'white', fontFamily: 'inherit', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="12" y2="17"/>
@@ -594,10 +602,10 @@ function OrganizerProfile() {
         {menu === 'sales' && !selectedEvent && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <p style={{ fontSize: 15, fontWeight: 700, color: '#262626', marginBottom: 16 }}>Sales</p>
-            {events.filter(e => e.status_validasi).length === 0 ? (
+            {events.filter(e => e.status_validasi === 'disetujui').length === 0 ? (
               <p style={{ color: '#A39680', fontSize: 13 }}>No events yet.</p>
             ) : (
-              events.filter(e => e.status_validasi === true).map(e => (
+              events.filter(e => e.status_validasi === 'disetujui').map(e => (
                 <div key={e.id_pergelaran} style={{ border: '1px solid #e8e4dc', borderRadius: 8, padding: 14, marginBottom: 10, display: 'flex', gap: 14, alignItems: 'center', cursor: 'pointer' }} onClick={() => ambilSales(e)}>
                   <img src={e.poster_pergelaran || '/placeholder.jpg'} alt={e.nama_pergelaran} style={{ width: 64, height: 64, objectFit: 'cover', borderRadius: 6, flexShrink: 0 }} />
                   <div style={{ flex: 1 }}>

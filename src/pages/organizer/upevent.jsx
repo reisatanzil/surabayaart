@@ -219,7 +219,7 @@ function UpEvent() {
         qris_image: qrisUrl,
         id_penyelenggara: penyelenggara.id_penyelenggara,
         status_event: false,
-        status_validasi: false,
+        status_validasi: 'menunggu',
       })
       .select()
       .single()

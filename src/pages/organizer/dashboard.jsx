@@ -121,7 +121,7 @@ function OrganizerDashboard() {
   const [detailOrders, setDetailOrders] = useState([]) 
   const [loading, setLoading]         = useState(true)
   const [stats, setStats]             = useState({
-    total: 0, approved: 0, pending: 0,
+    total: 0, approved: 0, pending: 0, rejected: 0, cancelled: 0,
     totalTiket: 0, totalPendapatan: 0,
     totalMerch: 0, pendapatanMerch: 0,
   })
@@ -252,8 +252,10 @@ async function ambilData(idPengguna) {
       setDetailOrders(validDetails)
       setStats({
         total:            ev.length,
-        approved:         ev.filter(e => e.status_validasi === true).length,
-        pending:          ev.filter(e => e.status_validasi === false).length,
+        approved:         ev.filter(e => e.status_validasi === 'disetujui').length,
+        pending:          ev.filter(e => e.status_validasi === 'menunggu').length,
+        rejected:         ev.filter(e => e.status_validasi === 'ditolak').length,
+        cancelled:        ev.filter(e => e.status_validasi === 'dibatalkan').length,
         totalTiket:       totalTiketTerjual,
         totalPendapatan,
         totalMerch,
@@ -332,6 +334,8 @@ async function ambilData(idPengguna) {
             { label: 'TOTAL EVENT',       value: stats.total,           color: '#262626' },
             { label: 'DISETUJUI',         value: stats.approved,        color: '#3B6D11' },
             { label: 'MENUNGGU',          value: stats.pending,         color: '#BA7517' },
+            { label: 'DITOLAK',           value: stats.rejected,        color: '#A32D2D' },
+            { label: 'DIBATALKAN',        value: stats.cancelled,       color: '#4D403A' },
             { label: 'TIKET TERJUAL',     value: stats.totalTiket,      color: '#1565c0' },
             { label: 'PENDAPATAN TIKET',  value: formatRp(stats.totalPendapatan), color: '#4D403A', small: true },
             { label: 'MERCH TERJUAL',     value: stats.totalMerch,      color: '#6a1b9a' },
@@ -384,6 +388,8 @@ async function ambilData(idPengguna) {
                 <DonutChart data={[
                   { label: 'Disetujui', value: stats.approved, color: '#3B6D11' },
                   { label: 'Menunggu', value: stats.pending,  color: '#BA7517' },
+                  { label: 'Ditolak', value: stats.rejected,  color: '#A32D2D' },
+                  { label: 'Dibatalkan', value: stats.cancelled, color: '#4D403A' },
                 ]} />
               </div>
               {/* Komposisi pendapatan */}
@@ -420,14 +426,29 @@ async function ambilData(idPengguna) {
                       </p>
                     </div>
                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                      <span style={{
-                        fontSize: 11, padding: '3px 10px', borderRadius: 50, fontWeight: 600,
-                        background: e.status_validasi ? '#EAF3DE' : '#FAEEDA',
-                        color: e.status_validasi ? '#27500A' : '#633806',
-                        display: 'inline-block', marginBottom: 6
-                      }}>
-                        {e.status_validasi ? 'Tayang' : 'Menunggu'}
-                      </span>
+                      {(() => {
+                        const badgeMap = {
+                          disetujui:  { bg: '#EAF3DE', color: '#27500A', label: 'Tayang' },
+                          menunggu:   { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
+                          ditolak:    { bg: '#FCEBEB', color: '#A32D2D', label: 'Ditolak' },
+                          dibatalkan: { bg: '#EDEAE4', color: '#4D403A', label: 'Dibatalkan' },
+                        }
+                        const b = badgeMap[e.status_validasi] || badgeMap['menunggu']
+                        return (
+                          <span style={{
+                            fontSize: 11, padding: '3px 10px', borderRadius: 50, fontWeight: 600,
+                            background: b.bg, color: b.color,
+                            display: 'inline-block', marginBottom: 6
+                          }}>
+                            {b.label}
+                          </span>
+                        )
+                      })()}
+                      {e.status_validasi === 'ditolak' && e.alasan_ditolak && (
+                        <p style={{ fontSize: 10, color: '#A32D2D', marginBottom: 6, maxWidth: 140 }}>
+                          {e.alasan_ditolak}
+                        </p>
+                      )}
                       <p style={{ fontSize: 12, color: '#4D403A', fontWeight: 700 }}>
                         {e.tiketTerjual} / {e.tiketTotal} tiket
                       </p>
