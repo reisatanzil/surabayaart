@@ -29,12 +29,8 @@ function Cart() {
   }, [])
 
   async function ambilMerch(id_pergelaran) {
-    const { data: eventData } = await supabase
-      .from('pergelaran').select('id_penyelenggara')
-      .eq('id_pergelaran', id_pergelaran).single()
-    if (!eventData) return
     const { data } = await supabase.from('merchandise').select('*')
-      .eq('id_penyelenggara', eventData.id_penyelenggara)
+      .eq('id_pergelaran', id_pergelaran)
     setMerch(data || [])
   }
 
