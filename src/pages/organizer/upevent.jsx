@@ -253,6 +253,7 @@ function UpEvent() {
         stok_merchandise: parseInt(m.stok_merchandise) || 0,
         foto_merchandise: fotoUrl,
         id_penyelenggara: penyelenggara.id_penyelenggara,
+        id_pergelaran: pergelaranData.id_pergelaran,
       })
     }
 
