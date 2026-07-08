@@ -36,6 +36,10 @@ function OrganizerProfile() {
   const [savingMerchModal, setSavingMerchModal] = useState(false)
   const [deletingMerchModalId, setDeletingMerchModalId] = useState(null)
 
+  // Merchandise sales / orders (pembelian merchandise per event)
+  const [merchOrders, setMerchOrders] = useState([])
+  const [loadingMerchOrders, setLoadingMerchOrders] = useState(false)
+
   useEffect(() => {
     const data = localStorage.getItem('user')
     if (!data) { navigate('/signin'); return }
@@ -73,11 +77,35 @@ function OrganizerProfile() {
   // ── MERCHANDISE MODAL ─────────────────────────────────────────
 
   async function ambilMerchSales() {
+    if (!selectedEvent) return
     const { data } = await supabase
       .from('merchandise')
       .select('*')
-      .eq('id_penyelenggara', penyelenggara.id_penyelenggara)
+      .eq('id_pergelaran', selectedEvent.id_pergelaran)
     setMerchSales(data || [])
+    await ambilMerchOrders(selectedEvent)
+  }
+
+  async function ambilMerchOrders(event) {
+    setLoadingMerchOrders(true)
+    setMerchOrders([])
+    const { data: merchList } = await supabase
+      .from('merchandise')
+      .select('id_merchandise')
+      .eq('id_pergelaran', event.id_pergelaran)
+    const merchIds = (merchList || []).map(m => m.id_merchandise)
+    if (merchIds.length === 0) { setLoadingMerchOrders(false); return }
+
+    const { data } = await supabase
+      .from('detail_order')
+      .select('*, order(*, pengguna(nama_pengguna, email_pengguna)), merchandise(nama_merchandise, foto_merchandise)')
+      .in('id_merchandise', merchIds)
+
+    const sorted = (data || []).slice().sort((a, b) =>
+      new Date(b.order?.waktu_order || 0) - new Date(a.order?.waktu_order || 0)
+    )
+    setMerchOrders(sorted)
+    setLoadingMerchOrders(false)
   }
 
   function bukaAddMerchModal() {
@@ -112,6 +140,7 @@ function OrganizerProfile() {
       foto_merchandise: merchModalForm.foto_merchandise || null,
       deskripsi_merchandise: merchModalForm.deskripsi_merchandise || null,
       id_penyelenggara: penyelenggara.id_penyelenggara,
+      id_pergelaran: selectedEvent?.id_pergelaran,
     }
 
     if (merchModal === 'add') {
@@ -197,8 +226,9 @@ function OrganizerProfile() {
       const { data: tiketData } = await supabase.from('tiket').select('*').eq('id_jadwal', jadwalData.id_jadwal)
       setTikets(tiketData || [])
     }
-    const { data: merchData } = await supabase.from('merchandise').select('*').eq('id_penyelenggara', penyelenggara.id_penyelenggara)
+    const { data: merchData } = await supabase.from('merchandise').select('*').eq('id_pergelaran', event.id_pergelaran)
     setMerchSales(merchData || [])
+    await ambilMerchOrders(event)
   }
 
   async function simpanEdit() {
@@ -708,6 +738,69 @@ function OrganizerProfile() {
                     </div>
                   </div>
                 ))
+              )}
+            </div>
+
+            {/* Penjualan Merchandise */}
+            <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20, marginTop: 14 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <p style={{ fontSize: 13, fontWeight: 700, color: '#262626' }}>Penjualan Merchandise</p>
+                <div style={{ display: 'flex', gap: 14 }}>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ fontSize: 10, color: '#A39680' }}>Terjual</p>
+                    <p style={{ fontSize: 14, fontWeight: 800, color: '#262626' }}>
+                      {merchOrders.reduce((sum, d) => sum + (d.jumlah || 0), 0)}
+                    </p>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ fontSize: 10, color: '#A39680' }}>Pendapatan</p>
+                    <p style={{ fontSize: 14, fontWeight: 800, color: '#3B6D11' }}>
+                      Rp {merchOrders
+                        .filter(d => d.order?.status_validasi_bayar === 'approved')
+                        .reduce((sum, d) => sum + (parseFloat(d.subtotal) || 0), 0)
+                        .toLocaleString('id-ID')}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {loadingMerchOrders ? (
+                <p style={{ fontSize: 13, color: '#A39680' }}>Loading...</p>
+              ) : merchOrders.length === 0 ? (
+                <p style={{ fontSize: 13, color: '#A39680' }}>Belum ada pembelian merchandise.</p>
+              ) : (
+                merchOrders.map((d, i) => {
+                  const o = d.order
+                  const statusVal = o?.status_validasi_bayar || 'pending'
+                  return (
+                    <div key={d.id_detail_order} style={{ display: 'flex', gap: 12, alignItems: 'center', padding: '12px 0', borderBottom: i < merchOrders.length - 1 ? '1px solid #f0ece4' : 'none' }}>
+                      {d.merchandise?.foto_merchandise ? (
+                        <img src={d.merchandise.foto_merchandise} alt={d.merchandise?.nama_merchandise} style={{ width: 44, height: 44, objectFit: 'cover', borderRadius: 8, flexShrink: 0, border: '1px solid #e8e4dc' }} />
+                      ) : (
+                        <div style={{ width: 44, height: 44, borderRadius: 8, background: '#F5F2ED', flexShrink: 0 }} />
+                      )}
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#262626', marginBottom: 2 }}>{d.merchandise?.nama_merchandise || 'Merchandise'}</p>
+                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>{o?.pengguna?.nama_pengguna || 'Pengguna'} · {o?.pengguna?.email_pengguna}</p>
+                        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, color: '#4D403A', fontWeight: 600 }}>{d.jumlah}x · Rp {parseInt(d.subtotal || 0).toLocaleString('id-ID')}</span>
+                          {o?.waktu_order && (
+                            <>
+                              <span style={{ fontSize: 10, color: '#A39680' }}>·</span>
+                              <span style={{ fontSize: 11, color: '#A39680' }}>{new Date(o.waktu_order).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <StatusBadge status={statusVal} />
+                      {o?.bukti_bayar && (
+                        <button onClick={() => setSelectedOrder(o)} style={{ padding: '6px 12px', background: '#F5F2ED', border: '1px solid #e8e4dc', borderRadius: 6, fontSize: 11, cursor: 'pointer', color: '#4D403A', fontFamily: 'inherit', fontWeight: 600, flexShrink: 0 }}>
+                          Lihat Bukti
+                        </button>
+                      )}
+                    </div>
+                  )
+                })
               )}
             </div>
           </div>
