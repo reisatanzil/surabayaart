@@ -11,6 +11,8 @@ function Detail() {
   const [tanggalDipilih, setTanggalDipilih] = useState(null)
   const [jumlah, setJumlah] = useState(1)
   const [bulanDilihat, setBulanDilihat] = useState(new Date())
+  const [merchandise, setMerchandise] = useState([])
+  const [selectedMerchandise, setSelectedMerchandise] = useState([])
 
   useEffect(() => {
     const data = localStorage.getItem('user')
@@ -38,6 +40,13 @@ function Detail() {
       if (j) {
         setBulanDilihat(new Date(j.tanggal))
       }
+
+      // Ambil merchandise
+      const { data: m } = await supabase
+        .from('merchandise')
+        .select('*')
+        .eq('id_pergelaran', id)
+      setMerchandise(m || [])
     }
   }
 
@@ -108,12 +117,36 @@ function Detail() {
     )
   }
 
+  function toggleMerchandise(item) {
+    const existing = selectedMerchandise.find(m => m.id_merchandise === item.id_merchandise)
+    if (existing) {
+      setSelectedMerchandise(selectedMerchandise.filter(m => m.id_merchandise !== item.id_merchandise))
+    } else {
+      setSelectedMerchandise([...selectedMerchandise, { ...item, jumlah: 1 }])
+    }
+  }
+
+  function updateMerchandiseQty(id, qty) {
+    setSelectedMerchandise(selectedMerchandise.map(m => 
+      m.id_merchandise === id ? { ...m, jumlah: Math.max(1, qty) } : m
+    ))
+  }
+
   function beliTiket() {
     if (!tanggalDipilih) { alert('Pilih tanggal dulu!'); return }
     if (jumlah < 1) { alert('Jumlah tiket minimal 1!'); return }
+    
+    // Hitung total merchandise
+    const merchandiseTotal = selectedMerchandise.reduce((sum, item) => {
+      return sum + (item.harga_merchandise || 0) * (item.jumlah || 1)
+    }, 0)
+
     localStorage.setItem('cart', JSON.stringify({
       event, jadwal, tanggalDipilih, jumlah,
-      totalHarga: jumlah * (event.harga_tiket || 0)
+      totalHarga: jumlah * (event.harga_tiket || 0),
+      merchandise: selectedMerchandise,
+      merchandiseTotal: merchandiseTotal,
+      grandTotal: (jumlah * (event.harga_tiket || 0)) + merchandiseTotal
     }))
     navigate('/cart')
   }
@@ -206,7 +239,6 @@ function Detail() {
                 {event.alamat_pergelaran}
               </p>
             )}
-            {/* GOOGLE MAPS EMBED */}
             {event.alamat_pergelaran && (
               <iframe
                 title="maps"
@@ -219,6 +251,81 @@ function Detail() {
               />
             )}
           </div>
+
+          {/* MERCHANDISE */}
+          {merchandise.length > 0 && (
+            <div style={{ background: '#F5F2ED', borderRadius: 10, padding: '16px 20px', marginBottom: 16 }}>
+              <p style={{ fontSize: 12, fontWeight: 700, color: '#4D403A', marginBottom: 12, letterSpacing: 1 }}>
+                MERCHANDISE
+              </p>
+              {merchandise.map(item => {
+                const isSelected = selectedMerchandise.find(m => m.id_merchandise === item.id_merchandise)
+                return (
+                  <div key={item.id_merchandise} style={{
+                    display: 'flex', gap: 12, padding: '12px 0',
+                    borderBottom: '1px solid #e8e4dc',
+                    alignItems: 'center'
+                  }}>
+                    <div style={{
+                      width: 60, height: 60, borderRadius: 6,
+                      overflow: 'hidden', background: '#f0f0f0', flexShrink: 0
+                    }}>
+                      <img 
+                        src={item.foto_merchandise || '/placeholder.jpg'} 
+                        alt={item.nama_merchandise}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#262626', marginBottom: 4 }}>
+                        {item.nama_merchandise}
+                      </p>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: '#3B6D11' }}>
+                        Rp {parseInt(item.harga_merchandise || 0).toLocaleString('id-ID')}
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {isSelected && (
+                        <>
+                          <button 
+                            onClick={() => updateMerchandiseQty(item.id_merchandise, isSelected.jumlah - 1)}
+                            style={{
+                              width: 24, height: 24, borderRadius: '50%',
+                              border: '1px solid #e8e4dc', background: 'white',
+                              cursor: 'pointer', fontSize: 14, color: '#4D403A',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}>−</button>
+                          <span style={{ fontSize: 12, fontWeight: 700, minWidth: 20, textAlign: 'center' }}>
+                            {isSelected.jumlah}
+                          </span>
+                          <button 
+                            onClick={() => updateMerchandiseQty(item.id_merchandise, isSelected.jumlah + 1)}
+                            style={{
+                              width: 24, height: 24, borderRadius: '50%',
+                              border: '1px solid #e8e4dc', background: 'white',
+                              cursor: 'pointer', fontSize: 14, color: '#4D403A',
+                              display: 'flex', alignItems: 'center', justifyContent: 'center'
+                            }}>+</button>
+                        </>
+                      )}
+                      <button 
+                        onClick={() => toggleMerchandise(item)}
+                        style={{
+                          padding: '6px 12px', borderRadius: 6,
+                          background: isSelected ? '#4D403A' : 'white',
+                          color: isSelected ? 'white' : '#4D403A',
+                          border: isSelected ? 'none' : '1px solid #4D403A',
+                          fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                          fontFamily: 'inherit'
+                        }}>
+                        {isSelected ? '✓' : '+ Tambah'}
+                      </button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
 
         {/* KANAN */}
@@ -272,13 +379,23 @@ function Detail() {
 
               <div style={{ borderTop: '1px solid #e8e4dc', paddingTop: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
-                  <span style={{ fontSize: 12, color: '#A39680' }}>Total Kuantitas</span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>{jumlah}</span>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span style={{ fontSize: 12, color: '#A39680' }}>Total Harga</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: '#262626' }}>
+                  <span style={{ fontSize: 12, color: '#A39680' }}>Total Tiket</span>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
                     Rp {(jumlah * (event.harga_tiket || 0)).toLocaleString('id-ID')}
+                  </span>
+                </div>
+                {selectedMerchandise.length > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <span style={{ fontSize: 12, color: '#A39680' }}>Merchandise</span>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
+                      Rp {selectedMerchandise.reduce((sum, item) => sum + (item.harga_merchandise || 0) * (item.jumlah || 1), 0).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                )}
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed #e8e4dc', paddingTop: 4, marginTop: 4 }}>
+                  <span style={{ fontSize: 12, color: '#A39680', fontWeight: 700 }}>Grand Total</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: '#3B6D11' }}>
+                    Rp {((jumlah * (event.harga_tiket || 0)) + selectedMerchandise.reduce((sum, item) => sum + (item.harga_merchandise || 0) * (item.jumlah || 1), 0)).toLocaleString('id-ID')}
                   </span>
                 </div>
               </div>

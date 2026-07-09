@@ -43,7 +43,6 @@ function Cart() {
     setLoading(true)
 
     try {
-      // Ambil informasi pembayaran dari event
       const { data: pergelaranData, error: pergelaranError } = await supabase
         .from('pergelaran')
         .select('nama_bank, nomor_rekening, nama_pemilik_rekening, qris_image')
@@ -54,13 +53,18 @@ function Cart() {
         console.error('Error ambil info pembayaran:', pergelaranError)
       }
 
-      // DEBUG: Log data yang diambil
       console.log('Payment info from database:', pergelaranData)
       console.log('Selected payment method:', metodePembayaran)
       console.log('QRIS Image:', pergelaranData?.qris_image)
       console.log('Bank:', pergelaranData?.nama_bank)
 
-      // Insert ke tabel order
+      // Hitung total termasuk merchandise
+      const merchandiseTotal = cartData.merchandise?.reduce((sum, item) => {
+        return sum + (item.harga_merchandise || 0) * (item.jumlah || 1)
+      }, 0) || 0
+
+      const totalWithMerchandise = (cartData.totalHarga || 0) + merchandiseTotal
+
       const { data, error } = await supabase
         .from('order')
         .insert([{
@@ -69,7 +73,7 @@ function Cart() {
           tanggal_event: cartData.tanggalDipilih,
           jumlah_item: cartData.jumlah,
           jumlah_tiket: cartData.jumlah,
-          total_pembayaran: cartData.totalHarga,
+          total_pembayaran: totalWithMerchandise,
           metode_pembayaran: metodePembayaran,
           metode_bayar: metodePembayaran,
           status_pembayaran: false,
@@ -83,14 +87,13 @@ function Cart() {
 
       setOrderId(data.id_order)
 
-      // Cek apakah ada info pembayaran
       const hasTransferInfo = pergelaranData?.nama_bank && pergelaranData?.nomor_rekening
       const hasQrisInfo = pergelaranData?.qris_image
       
       if (metodePembayaran === 'transfer' && !hasTransferInfo) {
         setNoPaymentInfo(true)
       } else if (metodePembayaran === 'qris' && !hasQrisInfo) {
-        setNoPaymentInfo(true)
+        setNoPaymentInfo(false)
       } else {
         setNoPaymentInfo(false)
       }
@@ -100,8 +103,9 @@ function Cart() {
         nomor_rekening: pergelaranData?.nomor_rekening,
         nama_pemilik_rekening: pergelaranData?.nama_pemilik_rekening,
         qris_image: pergelaranData?.qris_image,
-        total_bayar: cartData.totalHarga,
-        order_id: data.id_order
+        total_bayar: totalWithMerchandise,
+        order_id: data.id_order,
+        merchandiseTotal: merchandiseTotal
       })
 
       setShowPaymentInfo(true)
@@ -137,6 +141,12 @@ function Cart() {
   const formatRupiah = (angka) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka)
   }
+
+  // Hitung total merchandise
+  const merchandiseList = cartData.merchandise || []
+  const merchandiseTotal = merchandiseList.reduce((sum, item) => {
+    return sum + (item.harga_merchandise || 0) * (item.jumlah || 1)
+  }, 0)
 
   return (
     <div style={{ fontFamily: 'Albert Sans, sans-serif', minHeight: '100vh', background: '#e8e4dc' }}>
@@ -191,7 +201,7 @@ function Cart() {
 
         <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
           
-          {/* KOLOM KIRI: DETAIL EVENT */}
+          {/* KOLOM KIRI: DETAIL EVENT & MERCHANDISE */}
           <div style={{ flex: 2, background: 'white', borderRadius: 10, padding: 24, overflow: 'hidden' }}>
             <p style={{ fontSize: 14, fontWeight: 700, color: '#4D403A', marginBottom: 16, borderBottom: '1px solid #e8e4dc', paddingBottom: 10 }}>
               Detail Event
@@ -241,6 +251,43 @@ function Cart() {
                 </div>
               </div>
             </div>
+
+            {/* MERCHANDISE SECTION */}
+            {merchandiseList.length > 0 && (
+              <div style={{ marginTop: 24 }}>
+                <p style={{ fontSize: 14, fontWeight: 700, color: '#4D403A', marginBottom: 16, borderBottom: '1px solid #e8e4dc', paddingBottom: 10 }}>
+                  Merchandise
+                </p>
+                {merchandiseList.map((item, index) => (
+                  <div key={index} style={{
+                    display: 'flex', gap: 12, padding: '12px 0',
+                    borderBottom: '1px solid #f0ece4'
+                  }}>
+                    <div style={{
+                      width: 60, height: 60, borderRadius: 6,
+                      overflow: 'hidden', background: '#f0f0f0', flexShrink: 0
+                    }}>
+                      <img 
+                        src={item.foto_merchandise || '/placeholder.jpg'} 
+                        alt={item.nama_merchandise}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                      />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <p style={{ fontSize: 13, fontWeight: 600, color: '#262626', marginBottom: 4 }}>
+                        {item.nama_merchandise}
+                      </p>
+                      <p style={{ fontSize: 11, color: '#A39680', marginBottom: 4 }}>
+                        Jumlah: {item.jumlah || 1}
+                      </p>
+                      <p style={{ fontSize: 12, fontWeight: 700, color: '#4D403A' }}>
+                        {formatRupiah((item.harga_merchandise || 0) * (item.jumlah || 1))}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* KOLOM KANAN: RINGKASAN & CHECKOUT */}
@@ -254,10 +301,26 @@ function Cart() {
               <span style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>{cartData.jumlah} Tiket</span>
             </div>
 
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10 }}>
+              <span style={{ fontSize: 13, color: '#555' }}>Subtotal Tiket</span>
+              <span style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>
+                {formatRupiah(cartData.totalHarga)}
+              </span>
+            </div>
+
+            {merchandiseList.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed #e8e4dc' }}>
+                <span style={{ fontSize: 13, color: '#555' }}>Merchandise</span>
+                <span style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>
+                  {formatRupiah(merchandiseTotal)}
+                </span>
+              </div>
+            )}
+
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
               <span style={{ fontSize: 13, color: '#555' }}>Total Pembayaran</span>
               <span style={{ fontSize: 16, fontWeight: 700, color: '#3B6D11' }}>
-                {formatRupiah(cartData.totalHarga)}
+                {formatRupiah((cartData.totalHarga || 0) + merchandiseTotal)}
               </span>
             </div>
 
@@ -380,7 +443,6 @@ function Cart() {
                 Informasi Pembayaran
               </p>
 
-              {/* Pesan jika tidak ada info pembayaran */}
               {noPaymentInfo && (
                 <div style={{
                   background: '#FDECEA', borderRadius: 8,
@@ -402,7 +464,6 @@ function Cart() {
                 </div>
               )}
 
-              {/* TRANSFER BANK */}
               {!noPaymentInfo && metodePembayaran === 'transfer' && paymentDetails.nama_bank && (
                 <div>
                   <div style={{
@@ -464,7 +525,6 @@ function Cart() {
                 </div>
               )}
 
-              {/* QRIS */}
               {!noPaymentInfo && metodePembayaran === 'qris' && paymentDetails.qris_image && (
                 <div>
                   <div style={{
@@ -500,7 +560,6 @@ function Cart() {
                 </div>
               )}
 
-              {/* Total */}
               <div style={{
                 marginTop: 20, paddingTop: 16,
                 borderTop: '2px dashed #e8e4dc',
@@ -515,7 +574,6 @@ function Cart() {
               </div>
             </div>
 
-            {/* Instruksi */}
             <div style={{
               background: '#FAEEDA', borderRadius: 8,
               padding: 12, marginBottom: 20
@@ -525,7 +583,6 @@ function Cart() {
               </p>
             </div>
 
-            {/* Tombol */}
             <button
               onClick={closePaymentInfo}
               style={{
