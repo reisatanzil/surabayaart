@@ -36,7 +36,7 @@ function OrganizerProfile() {
   const [savingMerchModal, setSavingMerchModal] = useState(false)
   const [deletingMerchModalId, setDeletingMerchModalId] = useState(null)
 
-  // Merchandise sales / orders (pembelian merchandise per event)
+  // Merchandise sales / orders
   const [merchOrders, setMerchOrders] = useState([])
   const [loadingMerchOrders, setLoadingMerchOrders] = useState(false)
 
@@ -186,19 +186,24 @@ function OrganizerProfile() {
     if (menu === 'reviews' && penyelenggara) ambilReviews(penyelenggara)
   }, [menu, penyelenggara])
 
-  // ── ORDERS & SALES ────────────────────────────────────────────
+  // ── ORDERS & SALES (DIPERBAIKI) ──────────────────────────────
 
+  // ✅ DIPERBAIKI: Langsung query ke tabel order berdasarkan id_pergelaran
   async function ambilOrders(event) {
     setEventBayar(event)
     setLoadingOrders(true)
     setOrders([])
-    const { data: jadwals } = await supabase.from('jadwal_event').select('id_jadwal').eq('id_pergelaran', event.id_pergelaran)
-    if (!jadwals || jadwals.length === 0) { setLoadingOrders(false); return }
-    const jadwalIds = jadwals.map(j => j.id_jadwal)
-    const { data: tiketList } = await supabase.from('tiket').select('id_order').in('id_jadwal', jadwalIds).not('id_order', 'is', null)
-    if (!tiketList || tiketList.length === 0) { setLoadingOrders(false); return }
-    const orderIds = [...new Set(tiketList.map(t => t.id_order))]
-    const { data: orderData } = await supabase.from('order').select('*, pengguna(nama_pengguna, email_pengguna)').in('id_order', orderIds).order('waktu_order', { ascending: false })
+    
+    const { data: orderData, error } = await supabase
+      .from('order')
+      .select('*, pengguna(nama_pengguna, email_pengguna)')
+      .eq('id_pergelaran', event.id_pergelaran)
+      .order('waktu_order', { ascending: false })
+
+    if (error) {
+      console.error('Error ambil orders:', error)
+    }
+
     setOrders(orderData || [])
     setLoadingOrders(false)
   }
@@ -219,15 +224,38 @@ function OrganizerProfile() {
     setProcessingId(null)
   }
 
+  // ✅ DIPERBAIKI: Hitung tiket dari tabel order, bukan tabel tiket
   async function ambilSales(event) {
     setSelectedEvent(event)
-    const { data: jadwalData } = await supabase.from('jadwal_event').select('id_jadwal').eq('id_pergelaran', event.id_pergelaran).single()
-    if (jadwalData) {
-      const { data: tiketData } = await supabase.from('tiket').select('*').eq('id_jadwal', jadwalData.id_jadwal)
-      setTikets(tiketData || [])
-    }
-    const { data: merchData } = await supabase.from('merchandise').select('*').eq('id_pergelaran', event.id_pergelaran)
+    
+    // Ambil semua order untuk event ini
+    const { data: orderData } = await supabase
+      .from('order')
+      .select('*')
+      .eq('id_pergelaran', event.id_pergelaran)
+      .order('waktu_order', { ascending: false })
+
+    // Konversi order menjadi format "tiket" untuk ditampilkan
+    // Setiap order = 1 entry di list tiket, dengan jumlah tiket dari jumlah_tiket/jumlah_item
+    const tiketList = (orderData || []).map(o => ({
+      id_tiket: o.id_order, // Pakai id_order sebagai ID
+      id_order: o.id_order,
+      jumlah_tiket: o.jumlah_tiket || o.jumlah_item || 1,
+      status_tiket: o.status_validasi_bayar === 'approved' ? 'valid' : 'pending',
+      waktu_order: o.waktu_order,
+      total_pembayaran: o.total_pembayaran,
+      status_validasi_bayar: o.status_validasi_bayar
+    }))
+
+    setTikets(tiketList)
+
+    // Ambil merchandise
+    const { data: merchData } = await supabase
+      .from('merchandise')
+      .select('*')
+      .eq('id_pergelaran', event.id_pergelaran)
     setMerchSales(merchData || [])
+    
     await ambilMerchOrders(event)
   }
 
@@ -283,11 +311,13 @@ function OrganizerProfile() {
       approved: { bg: '#EAF3DE', color: '#27500A', label: 'Disetujui' },
       rejected: { bg: '#FDECEA', color: '#7B1A1A', label: 'Ditolak' },
       pending:  { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
-      // status event (pergelaran)
+      menunggu: { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
+      menunggu_validasi: { bg: '#FAEEDA', color: '#633806', label: 'Menunggu' },
       disetujui:  { bg: '#EAF3DE', color: '#27500A', label: 'Disetujui' },
-      menunggu:   { bg: '#FAEEDA', color: '#633806', label: 'Menunggu Persetujuan' },
+      menunggu_persetujuan:   { bg: '#FAEEDA', color: '#633806', label: 'Menunggu Persetujuan' },
       ditolak:    { bg: '#FDECEA', color: '#7B1A1A', label: 'Ditolak' },
       dibatalkan: { bg: '#EDEAE4', color: '#4D403A', label: 'Dibatalkan' },
+      valid: { bg: '#EAF3DE', color: '#27500A', label: 'Valid' },
     }
     const s = map[status] || map['pending']
     return (
@@ -317,6 +347,17 @@ function OrganizerProfile() {
     star, count: reviews.filter(r => r.rating === star).length,
     pct: reviews.length > 0 ? Math.round((reviews.filter(r => r.rating === star).length / reviews.length) * 100) : 0
   }))
+
+  // ✅ Hitung statistik tiket dari order
+  const totalTiketTerjual = selectedEvent 
+    ? tickets.reduce((sum, t) => sum + (t.jumlah_tiket || 1), 0)
+    : 0
+  
+  const totalPendapatanTiket = selectedEvent
+    ? tickets
+        .filter(t => t.status_validasi_bayar === 'approved')
+        .reduce((sum, t) => sum + (parseFloat(t.total_pembayaran) || 0), 0)
+    : 0
 
   return (
     <div style={{ fontFamily: 'Albert Sans, sans-serif', background: '#FAFBF5', minHeight: '100vh' }}>
@@ -604,6 +645,8 @@ function OrganizerProfile() {
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                           <span style={{ fontSize: 11, color: '#4D403A', fontWeight: 600 }}>Rp {parseInt(o.total_pembayaran).toLocaleString('id-ID')}</span>
                           <span style={{ fontSize: 10, color: '#A39680' }}>·</span>
+                          <span style={{ fontSize: 11, color: '#A39680' }}>{o.jumlah_tiket || o.jumlah_item || 1} tiket</span>
+                          <span style={{ fontSize: 10, color: '#A39680' }}>·</span>
                           <span style={{ fontSize: 11, color: '#A39680' }}>{new Date(o.waktu_order).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
                         </div>
                       </div>
@@ -655,21 +698,24 @@ function OrganizerProfile() {
             <div style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
               <div style={{ flex: 1, background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: '16px 20px' }}>
                 <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', letterSpacing: 1, marginBottom: 8 }}>TIKET TERJUAL</p>
-                <p style={{ fontSize: 28, fontWeight: 800, color: '#262626' }}>{tikets.length}</p>
+                <p style={{ fontSize: 28, fontWeight: 800, color: '#262626' }}>{totalTiketTerjual}</p>
               </div>
               <div style={{ flex: 1, background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: '16px 20px' }}>
                 <p style={{ fontSize: 11, fontWeight: 600, color: '#A39680', letterSpacing: 1, marginBottom: 8 }}>TOTAL PENDAPATAN</p>
-                <p style={{ fontSize: 28, fontWeight: 800, color: '#3B6D11' }}>Rp {(tikets.length * (selectedEvent.harga_tiket || 0)).toLocaleString('id-ID')}</p>
+                <p style={{ fontSize: 28, fontWeight: 800, color: '#3B6D11' }}>Rp {totalPendapatanTiket.toLocaleString('id-ID')}</p>
               </div>
             </div>
             <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20, marginBottom: 14 }}>
-              <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 14 }}>List ID Tiket</p>
+              <p style={{ fontSize: 13, fontWeight: 700, color: '#262626', marginBottom: 14 }}>List Order Tiket</p>
               {tikets.length === 0 ? <p style={{ fontSize: 13, color: '#A39680' }}>No tickets sold yet.</p> : (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                   {tikets.map(t => (
                     <div key={t.id_tiket} style={{ background: '#F5F2ED', borderRadius: 8, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <p style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>{t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}</p>
-                      <span style={{ fontSize: 10, padding: '2px 8px', borderRadius: 50, fontWeight: 600, background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE', color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A' }}>{t.status_tiket === 'used' ? 'Dipakai' : 'Valid'}</span>
+                      <div>
+                        <p style={{ fontSize: 12, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>#{t.id_tiket.slice(0, 8).toUpperCase()}</p>
+                        <p style={{ fontSize: 10, color: '#A39680', marginTop: 2 }}>{t.jumlah_tiket} tiket · Rp {parseInt(t.total_pembayaran || 0).toLocaleString('id-ID')}</p>
+                      </div>
+                      <StatusBadge status={t.status_validasi_bayar || 'pending'} />
                     </div>
                   ))}
                 </div>
