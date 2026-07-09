@@ -8,9 +8,12 @@ function Cart() {
   const [cartData, setCartData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [metodePembayaran, setMetodePembayaran] = useState('transfer')
+  const [showPaymentInfo, setShowPaymentInfo] = useState(false)
+  const [paymentDetails, setPaymentDetails] = useState(null)
+  const [orderId, setOrderId] = useState(null)
+  const [noPaymentInfo, setNoPaymentInfo] = useState(false)
 
   useEffect(() => {
-    // 1. Cek apakah user sudah login dan berstatus buyer
     const userData = localStorage.getItem('user')
     if (!userData) { 
       navigate('/signin')
@@ -18,14 +21,12 @@ function Cart() {
     }
     
     const u = JSON.parse(userData)
-    // PERBAIKAN: Ganti 'customer' jadi 'buyer'
     if (u.role_pengguna !== 'buyer') { 
       navigate('/signin')
       return 
     } 
     setUser(u)
 
-    // 2. Ambil data keranjang dari localStorage
     const cartString = localStorage.getItem('cart')
     if (!cartString) {
       alert('Keranjang kamu kosong!')
@@ -36,13 +37,29 @@ function Cart() {
     setCartData(JSON.parse(cartString))
   }, [navigate])
 
-  // Fungsi untuk memproses Checkout
   async function handleCheckout() {
     if (!cartData || !user) return
     
     setLoading(true)
 
     try {
+      // Ambil informasi pembayaran dari event
+      const { data: pergelaranData, error: pergelaranError } = await supabase
+        .from('pergelaran')
+        .select('nama_bank, nomor_rekening, nama_pemilik_rekening, qris_image')
+        .eq('id_pergelaran', cartData.event.id_pergelaran)
+        .single()
+
+      if (pergelaranError) {
+        console.error('Error ambil info pembayaran:', pergelaranError)
+      }
+
+      // DEBUG: Log data yang diambil
+      console.log('Payment info from database:', pergelaranData)
+      console.log('Selected payment method:', metodePembayaran)
+      console.log('QRIS Image:', pergelaranData?.qris_image)
+      console.log('Bank:', pergelaranData?.nama_bank)
+
       // Insert ke tabel order
       const { data, error } = await supabase
         .from('order')
@@ -59,15 +76,35 @@ function Cart() {
           status_validasi_bayar: 'menunggu',
           waktu_order: new Date().toISOString()
         }])
+        .select()
+        .single()
 
       if (error) throw error
 
-      // Jika berhasil
-      alert('Checkout berhasil! Silakan lakukan pembayaran.')
-      localStorage.removeItem('cart')
+      setOrderId(data.id_order)
+
+      // Cek apakah ada info pembayaran
+      const hasTransferInfo = pergelaranData?.nama_bank && pergelaranData?.nomor_rekening
+      const hasQrisInfo = pergelaranData?.qris_image
       
-      // PERBAIKAN: Redirect ke /profile (bukan /customer/profile)
-      navigate('/profile')
+      if (metodePembayaran === 'transfer' && !hasTransferInfo) {
+        setNoPaymentInfo(true)
+      } else if (metodePembayaran === 'qris' && !hasQrisInfo) {
+        setNoPaymentInfo(true)
+      } else {
+        setNoPaymentInfo(false)
+      }
+
+      setPaymentDetails({
+        nama_bank: pergelaranData?.nama_bank,
+        nomor_rekening: pergelaranData?.nomor_rekening,
+        nama_pemilik_rekening: pergelaranData?.nama_pemilik_rekening,
+        qris_image: pergelaranData?.qris_image,
+        total_bayar: cartData.totalHarga,
+        order_id: data.id_order
+      })
+
+      setShowPaymentInfo(true)
       
     } catch (err) {
       console.error('Error checkout:', err)
@@ -75,6 +112,18 @@ function Cart() {
     } finally {
       setLoading(false)
     }
+  }
+
+  function closePaymentInfo() {
+    setShowPaymentInfo(false)
+    setNoPaymentInfo(false)
+    localStorage.removeItem('cart')
+    navigate('/profile')
+  }
+
+  function copyToClipboard(text, label) {
+    navigator.clipboard.writeText(text)
+    alert(`${label} disalin!`)
   }
 
   if (!cartData || !user) {
@@ -85,7 +134,6 @@ function Cart() {
     )
   }
 
-  // Format harga ke Rupiah
   const formatRupiah = (angka) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(angka)
   }
@@ -150,7 +198,6 @@ function Cart() {
             </p>
             
             <div style={{ display: 'flex', gap: 16 }}>
-              {/* Poster */}
               <div style={{ width: 120, height: 160, flexShrink: 0, borderRadius: 8, overflow: 'hidden', background: '#f0f0f0' }}>
                 <img 
                   src={cartData.event.poster_pergelaran || '/placeholder.jpg'} 
@@ -159,7 +206,6 @@ function Cart() {
                 />
               </div>
 
-              {/* Info Event */}
               <div style={{ flex: 1 }}>
                 <h3 style={{ fontSize: 16, fontWeight: 700, color: '#262626', marginBottom: 8, marginTop: 0 }}>
                   {cartData.event.nama_pergelaran}
@@ -215,7 +261,6 @@ function Cart() {
               </span>
             </div>
 
-            {/* Pilihan Metode Pembayaran */}
             <div style={{ marginBottom: 20 }}>
               <label style={{ fontSize: 12, fontWeight: 600, color: '#4D403A', marginBottom: 8, display: 'block' }}>
                 Metode Pembayaran
@@ -285,6 +330,218 @@ function Cart() {
 
         </div>
       </div>
+
+      {/* MODAL INFORMASI PEMBAYARAN */}
+      {showPaymentInfo && paymentDetails && (
+        <div
+          onClick={closePaymentInfo}
+          style={{
+            position: 'fixed', inset: 0,
+            background: 'rgba(38,38,38,0.7)',
+            display: 'flex', alignItems: 'center',
+            justifyContent: 'center', zIndex: 100, padding: 20
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: 'white', borderRadius: 16,
+              padding: 32, maxWidth: 500, width: '100%',
+              maxHeight: '90vh', overflow: 'auto'
+            }}
+          >
+            {/* Header */}
+            <div style={{ textAlign: 'center', marginBottom: 24 }}>
+              <div style={{
+                width: 60, height: 60, borderRadius: '50%',
+                background: '#EAF3DE', display: 'flex',
+                alignItems: 'center', justifyContent: 'center',
+                margin: '0 auto 12px'
+              }}>
+                <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#27500A" strokeWidth="2.5">
+                  <polyline points="20 6 9 17 4 12"/>
+                </svg>
+              </div>
+              <p style={{ fontSize: 18, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
+                Checkout Berhasil!
+              </p>
+              <p style={{ fontSize: 12, color: '#A39680' }}>
+                Order #{orderId?.slice(0, 8).toUpperCase()}
+              </p>
+            </div>
+
+            {/* Info Pembayaran */}
+            <div style={{
+              background: '#FAFBF5', borderRadius: 10,
+              padding: 20, marginBottom: 20,
+              border: '1px solid #e8e4dc'
+            }}>
+              <p style={{ fontSize: 14, fontWeight: 700, color: '#4D403A', marginBottom: 16 }}>
+                Informasi Pembayaran
+              </p>
+
+              {/* Pesan jika tidak ada info pembayaran */}
+              {noPaymentInfo && (
+                <div style={{
+                  background: '#FDECEA', borderRadius: 8,
+                  padding: 16, textAlign: 'center'
+                }}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#7B1A1A" strokeWidth="2" style={{ margin: '0 auto 8px' }}>
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                  </svg>
+                  <p style={{ fontSize: 13, fontWeight: 700, color: '#7B1A1A', marginBottom: 8 }}>
+                    Informasi pembayaran belum tersedia
+                  </p>
+                  <p style={{ fontSize: 12, color: '#7B1A1A', lineHeight: 1.6 }}>
+                    {metodePembayaran === 'qris' 
+                      ? 'Organizer belum upload QRIS. Silakan hubungi organizer untuk informasi pembayaran.'
+                      : 'Organizer belum upload informasi rekening. Silakan hubungi organizer untuk informasi pembayaran.'}
+                  </p>
+                </div>
+              )}
+
+              {/* TRANSFER BANK */}
+              {!noPaymentInfo && metodePembayaran === 'transfer' && paymentDetails.nama_bank && (
+                <div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    marginBottom: 12
+                  }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2">
+                      <rect x="2" y="2" width="20" height="20" rx="2"/>
+                      <line x1="2" y1="12" x2="22" y2="12"/>
+                      <line x1="12" y1="2" x2="12" y2="22"/>
+                    </svg>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#262626' }}>
+                      Transfer Bank
+                    </span>
+                  </div>
+
+                  <div style={{
+                    background: 'white', borderRadius: 8,
+                    padding: 12, marginBottom: 10
+                  }}>
+                    <p style={{ fontSize: 11, color: '#A39680', marginBottom: 4 }}>Bank</p>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: '#262626' }}>
+                      {paymentDetails.nama_bank}
+                    </p>
+                  </div>
+
+                  <div style={{
+                    background: 'white', borderRadius: 8,
+                    padding: 12, marginBottom: 10
+                  }}>
+                    <p style={{ fontSize: 11, color: '#A39680', marginBottom: 4 }}>Nomor Rekening</p>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <p style={{ fontSize: 14, fontWeight: 600, color: '#262626', fontFamily: 'monospace' }}>
+                        {paymentDetails.nomor_rekening}
+                      </p>
+                      <button
+                        onClick={() => copyToClipboard(paymentDetails.nomor_rekening, 'Nomor rekening')}
+                        style={{
+                          padding: '4px 10px', background: '#FAF7F2',
+                          border: '1px solid #e8e4dc', borderRadius: 6,
+                          fontSize: 11, fontWeight: 600, color: '#4D403A',
+                          cursor: 'pointer', fontFamily: 'inherit'
+                        }}
+                      >
+                        Salin
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{
+                    background: 'white', borderRadius: 8,
+                    padding: 12
+                  }}>
+                    <p style={{ fontSize: 11, color: '#A39680', marginBottom: 4 }}>Atas Nama</p>
+                    <p style={{ fontSize: 14, fontWeight: 600, color: '#262626' }}>
+                      {paymentDetails.nama_pemilik_rekening}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* QRIS */}
+              {!noPaymentInfo && metodePembayaran === 'qris' && paymentDetails.qris_image && (
+                <div>
+                  <div style={{
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    marginBottom: 12
+                  }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#4D403A" strokeWidth="2">
+                      <rect x="3" y="3" width="18" height="18" rx="2"/>
+                      <circle cx="8.5" cy="8.5" r="1.5"/>
+                      <polyline points="21 15 16 10 5 21"/>
+                    </svg>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: '#262626' }}>
+                      QRIS
+                    </span>
+                  </div>
+
+                  <div style={{
+                    background: 'white', borderRadius: 8,
+                    padding: 16, textAlign: 'center'
+                  }}>
+                    <img
+                      src={paymentDetails.qris_image}
+                      alt="QRIS"
+                      style={{
+                        maxWidth: '100%', maxHeight: 200,
+                        borderRadius: 6, objectFit: 'contain'
+                      }}
+                    />
+                    <p style={{ fontSize: 11, color: '#A39680', marginTop: 8 }}>
+                      Scan QRIS untuk pembayaran
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Total */}
+              <div style={{
+                marginTop: 20, paddingTop: 16,
+                borderTop: '2px dashed #e8e4dc',
+                textAlign: 'center'
+              }}>
+                <p style={{ fontSize: 12, color: '#A39680', marginBottom: 4 }}>
+                  Total Pembayaran
+                </p>
+                <p style={{ fontSize: 20, fontWeight: 700, color: '#3B6D11' }}>
+                  {formatRupiah(paymentDetails.total_bayar)}
+                </p>
+              </div>
+            </div>
+
+            {/* Instruksi */}
+            <div style={{
+              background: '#FAEEDA', borderRadius: 8,
+              padding: 12, marginBottom: 20
+            }}>
+              <p style={{ fontSize: 11, color: '#633806', lineHeight: 1.6, margin: 0 }}>
+                <strong>Catatan:</strong> Upload bukti pembayaran di halaman Profile setelah melakukan transfer. Pesanan akan divalidasi setelah pembayaran dikonfirmasi.
+              </p>
+            </div>
+
+            {/* Tombol */}
+            <button
+              onClick={closePaymentInfo}
+              style={{
+                width: '100%', padding: '12px',
+                background: '#262626', color: 'white',
+                border: 'none', borderRadius: 8,
+                fontSize: 14, fontWeight: 700,
+                cursor: 'pointer', fontFamily: 'inherit'
+              }}
+            >
+              Saya Sudah Bayar
+            </button>
+          </div>
+        </div>
+      )}
+
     </div>
   )
 }
