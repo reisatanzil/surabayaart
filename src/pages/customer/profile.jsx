@@ -17,17 +17,26 @@ function Profile() {
   const [uploading, setUploading] = useState(false)
 
   // Review states
-  const [reviewTarget, setReviewTarget] = useState(null) // { order, tiket, jadwal, pergelaran }
+  const [reviewTarget, setReviewTarget] = useState(null)
   const [reviewRating, setReviewRating] = useState(0)
   const [reviewHover, setReviewHover] = useState(0)
   const [reviewPesan, setReviewPesan] = useState('')
   const [submittingReview, setSubmittingReview] = useState(false)
-  const [submittedReviews, setSubmittedReviews] = useState({}) // { id_order: true }
+  const [submittedReviews, setSubmittedReviews] = useState({})
 
   useEffect(() => {
     const data = localStorage.getItem('user')
-    if (!data) { navigate('/signin'); return }
+    if (!data) { 
+      navigate('/signin')
+      return 
+    }
+    
     const u = JSON.parse(data)
+    if (u.role_pengguna !== 'buyer') {
+      navigate('/signin')
+      return
+    }
+    
     setUser(u)
     ambilRiwayat(u.id_pengguna)
     ambilFotoProfil(u.id_pengguna)
@@ -38,14 +47,18 @@ function Profile() {
         document.getElementById('section-tiket')?.scrollIntoView({ behavior: 'smooth' })
       }, 900)
     }
-  }, [])
+  }, [navigate])
 
   async function ambilFotoProfil(id) {
-    const { data } = supabase.storage
-      .from('avatars')
-      .getPublicUrl(`${id}/avatar`)
-    if (data?.publicUrl) {
-      setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
+    try {
+      const { data } = supabase.storage
+        .from('avatars')
+        .getPublicUrl(`${id}/avatar`)
+      if (data?.publicUrl) {
+        setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
+      }
+    } catch (err) {
+      console.error('Error ambil foto profil:', err)
     }
   }
 
@@ -75,6 +88,7 @@ function Profile() {
         .getPublicUrl(`${user.id_pengguna}/avatar`)
       setAvatarUrl(`${data.publicUrl}?t=${Date.now()}`)
     } catch (err) {
+      console.error('Error upload foto:', err)
       alert('Gagal mengupload foto. Coba lagi.')
     } finally {
       setUploadingPhoto(false)
@@ -83,78 +97,95 @@ function Profile() {
   }
 
   async function ambilRiwayat(id) {
-    const { data: orderData, error } = await supabase
-      .from('order')
-      .select(`*, detail_order(*), tiket(*)`)
-      .eq('id_pengguna', id)
-      .order('waktu_order', { ascending: false })
+    try {
+      setLoading(true)
+      
+      const { data: orderData, error } = await supabase
+        .from('order')
+        .select('*')
+        .eq('id_pengguna', id)
+        .order('waktu_order', { ascending: false })
 
-    setOrders(orderData || [])
-
-    // Cek review yang sudah pernah dibuat
-    if (orderData && orderData.length > 0) {
-      const orderIds = orderData.map(o => o.id_order)
-      const { data: reviewData } = await supabase
-        .from('review')
-        .select('id_order')
-        .in('id_order', orderIds)
-
-      if (reviewData) {
-        const submitted = {}
-        reviewData.forEach(r => { submitted[r.id_order] = true })
-        setSubmittedReviews(submitted)
+      if (error) {
+        console.error('Error ambil order:', error)
+        setOrders([])
+      } else {
+        setOrders(orderData || [])
       }
-    }
 
-    setLoading(false)
+      if (orderData && orderData.length > 0) {
+        const orderIds = orderData.map(o => o.id_order)
+        const { data: reviewData, error: reviewError } = await supabase
+          .from('review')
+          .select('id_order')
+          .in('id_order', orderIds)
+
+        if (!reviewError && reviewData) {
+          const submitted = {}
+          reviewData.forEach(r => { submitted[r.id_order] = true })
+          setSubmittedReviews(submitted)
+        }
+      }
+    } catch (err) {
+      console.error('Error ambil riwayat:', err)
+      setOrders([])
+    } finally {
+      setLoading(false)
+    }
   }
 
-  // Buka modal review: ambil info jadwal & pergelaran dari tiket pertama order
   async function bukaModalReview(order) {
-    const tiketPertama = order.tiket?.[0]
-    if (!tiketPertama?.id_jadwal) return
+    try {
+      let pergelaranInfo = null
+      
+      if (order.id_pergelaran) {
+        const { data: pergelaran } = await supabase
+          .from('pergelaran')
+          .select('*')
+          .eq('id_pergelaran', order.id_pergelaran)
+          .single()
+        
+        pergelaranInfo = pergelaran
+      }
 
-    // Ambil jadwal + pergelaran
-    const { data: jadwal } = await supabase
-      .from('jadwal_event')
-      .select('*, pergelaran(*)')
-      .eq('id_jadwal', tiketPertama.id_jadwal)
-      .single()
-
-    setReviewTarget({ order, jadwal })
-    setReviewRating(0)
-    setReviewHover(0)
-    setReviewPesan('')
+      setReviewTarget({ 
+        order, 
+        pergelaran: pergelaranInfo,
+        tanggal_event: order.tanggal_event
+      })
+      setReviewRating(0)
+      setReviewHover(0)
+      setReviewPesan('')
+    } catch (err) {
+      console.error('Error buka modal review:', err)
+      alert('Gagal membuka form review')
+    }
   }
 
   async function kirimReview() {
     if (!reviewRating || !reviewTarget) return
     setSubmittingReview(true)
 
-    const { error } = await supabase.from('review').insert({
-      id_order: reviewTarget.order.id_order,
-      id_pengguna: user.id_pengguna,
-      id_pergelaran: reviewTarget.jadwal?.pergelaran?.id_pergelaran || null,
-      rating: reviewRating,
-      pesan: reviewPesan.trim() || null,
-    })
+    try {
+      const { error } = await supabase.from('review').insert({
+        id_order: reviewTarget.order.id_order,
+        id_pengguna: user.id_pengguna,
+        id_pergelaran: reviewTarget.pergelaran?.id_pergelaran || null,
+        rating: reviewRating,
+        pesan: reviewPesan.trim() || null,
+      })
 
-    if (error) {
-      alert('Gagal mengirim review: ' + error.message)
-    } else {
+      if (error) throw error
+
       setSubmittedReviews(prev => ({ ...prev, [reviewTarget.order.id_order]: true }))
       setReviewTarget(null)
+      alert('Review berhasil dikirim!')
+    } catch (err) {
+      console.error('Error kirim review:', err)
+      alert('Gagal mengirim review: ' + err.message)
+    } finally {
+      setSubmittingReview(false)
     }
-    setSubmittingReview(false)
-  }
-
-  // Cek apakah event sudah selesai (tanggal jadwal sudah lewat)
-  function eventSudahSelesai(order) {
-    const tiketPertama = order.tiket?.[0]
-    if (!tiketPertama) return false
-    // Kita cek dari waktu_order + fallback ke sekarang
-    // Akan lebih akurat setelah kita ambil jadwal, tapi untuk tombol awal kita cek saja apakah ada tiket
-    return true // akan di-filter lebih lanjut saat modal dibuka
   }
 
   function bukaModalUpload(order) {
@@ -173,28 +204,38 @@ function Profile() {
   async function kirimBukti() {
     if (!buktiBayar || !uploadTargetOrder) return
     setUploading(true)
-    const path = `bukti/${uploadTargetOrder.id_order}_${buktiBayar.name}`
-    const { error: uploadError } = await supabase.storage
-      .from('documents')
-      .upload(path, buktiBayar, { upsert: true })
-    if (uploadError) {
-      alert('Gagal upload: ' + uploadError.message)
-      setUploading(false)
-      return
-    }
-    const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path)
-    await supabase.from('order').update({
-      bukti_bayar: urlData.publicUrl,
-      status_validasi_bayar: 'menunggu_validasi'
-    }).eq('id_order', uploadTargetOrder.id_order)
+    
+    try {
+      const path = `bukti/${uploadTargetOrder.id_order}_${buktiBayar.name}`
+      const { error: uploadError } = await supabase.storage
+        .from('documents')
+        .upload(path, buktiBayar, { upsert: true })
+      
+      if (uploadError) throw uploadError
+      
+      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(path)
+      
+      const { error: updateError } = await supabase.from('order').update({
+        bukti_bayar: urlData.publicUrl,
+        status_validasi_bayar: 'menunggu_validasi'
+      }).eq('id_order', uploadTargetOrder.id_order)
 
-    setOrders(prev => prev.map(o =>
-      o.id_order === uploadTargetOrder.id_order
-        ? { ...o, bukti_bayar: urlData.publicUrl, status_validasi_bayar: 'menunggu_validasi' }
-        : o
-    ))
-    setUploading(false)
-    setUploadTargetOrder(null)
+      if (updateError) throw updateError
+
+      setOrders(prev => prev.map(o =>
+        o.id_order === uploadTargetOrder.id_order
+          ? { ...o, bukti_bayar: urlData.publicUrl, status_validasi_bayar: 'menunggu_validasi' }
+          : o
+      ))
+      
+      alert('Bukti pembayaran berhasil dikirim!')
+      setUploadTargetOrder(null)
+    } catch (err) {
+      console.error('Error kirim bukti:', err)
+      alert('Gagal upload bukti: ' + err.message)
+    } finally {
+      setUploading(false)
+    }
   }
 
   function logout() {
@@ -202,7 +243,13 @@ function Profile() {
     navigate('/signin')
   }
 
-  if (!user) return null
+  if (!user) {
+    return (
+      <div style={{ fontFamily: 'Albert Sans, sans-serif', minHeight: '100vh', background: '#FAFBF5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <p style={{ fontSize: 14, color: '#4D403A' }}>Memuat...</p>
+      </div>
+    )
+  }
 
   const ordersApproved = orders.filter(o => o.status_validasi_bayar === 'approved')
   const ordersPending  = orders.filter(o =>
@@ -212,13 +259,6 @@ function Profile() {
     o.status_validasi_bayar === 'pending'
   )
   const ordersRejected = orders.filter(o => o.status_validasi_bayar === 'rejected')
-
-  const StarIcon = ({ filled, half }) => (
-    <svg width="22" height="22" viewBox="0 0 24 24" fill={filled ? '#F5A623' : 'none'}
-      stroke={filled ? '#F5A623' : '#DFD8CE'} strokeWidth="1.5">
-      <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>
-    </svg>
-  )
 
   return (
     <div style={{ fontFamily: 'Albert Sans, sans-serif', background: '#FAFBF5', minHeight: '100vh' }}>
@@ -238,15 +278,15 @@ function Profile() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 28 }}>
-          <span onClick={() => navigate('/home')}
+          <span onClick={() => navigate('/')}
             style={{ fontSize: 13, cursor: 'pointer', color: '#555', letterSpacing: 0.5 }}>
-            Dashboard
+            Beranda
           </span>
           <span onClick={() => navigate('/reservasi')}
             style={{ fontSize: 13, cursor: 'pointer', color: '#555', letterSpacing: 0.5 }}>
             Reservasi
           </span>
-          <button onClick={() => navigate('/profile')}
+          <button onClick={() => navigate('/customer/profile')}
             style={{
               padding: '8px 20px', background: '#262626', color: 'white',
               border: 'none', borderRadius: 50, fontSize: 12,
@@ -312,7 +352,7 @@ function Profile() {
                 background: '#FAEEDA', color: '#633806',
                 fontWeight: 600, marginTop: 4, display: 'inline-block'
               }}>
-                {user.role_pengguna === 'buyer' ? 'customer' : user.role_pengguna}
+                Customer
               </span>
             </div>
           </div>
@@ -341,13 +381,13 @@ function Profile() {
               background: 'white', borderRadius: 10,
               border: '1px solid #e8e4dc', padding: 32, textAlign: 'center'
             }}>
-              <p style={{ fontSize: 13, color: '#A39680' }}>No ticket yet.</p>
+              <p style={{ fontSize: 13, color: '#A39680' }}>Belum ada tiket.</p>
               <button onClick={() => navigate('/reservasi')} style={{
                 marginTop: 12, padding: '8px 20px',
                 background: '#262626', color: 'white',
                 border: 'none', borderRadius: 8, fontSize: 12,
                 fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
-              }}>Secure Your Ticket</button>
+              }}>Pesan Tiket Sekarang</button>
             </div>
           </>
         ) : (
@@ -385,7 +425,7 @@ function Profile() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
-                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                          Rp {parseInt(order.total_pembayaran || 0).toLocaleString('id-ID')}
                         </p>
                         <span style={{
                           fontSize: 11, padding: '2px 8px', borderRadius: 50,
@@ -398,57 +438,20 @@ function Profile() {
                       </div>
                     </div>
 
-                    {order.detail_order?.map(detail => (
-                      <div key={detail.id_detail_order} style={{
-                        display: 'flex', justifyContent: 'space-between', marginBottom: 6
-                      }}>
-                        <span style={{ fontSize: 12, color: '#555' }}>{detail.jumlah} tiket</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
-                        </span>
-                      </div>
-                    ))}
-
-                    {order.tiket?.length > 0 && (
-                      <div style={{
-                        marginTop: 10, padding: '12px 14px',
-                        background: '#FAFBF5', borderRadius: 8,
-                        border: '1px solid #e8e4dc'
-                      }}>
-                        <p style={{ fontSize: 11, color: '#A39680', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
-                          🎟 {order.tiket.length} tiket dibuat — aktif setelah pembayaran divalidasi
+                    <div style={{
+                      marginBottom: 10, padding: '10px 14px',
+                      background: '#FAFBF5', borderRadius: 8,
+                      border: '1px solid #e8e4dc'
+                    }}>
+                      <p style={{ fontSize: 12, color: '#555', marginBottom: 4 }}>
+                        <strong>Jumlah Tiket:</strong> {order.jumlah_tiket || order.jumlah_item || 0}
+                      </p>
+                      {order.tanggal_event && (
+                        <p style={{ fontSize: 12, color: '#555' }}>
+                          <strong>Tanggal Event:</strong> {order.tanggal_event}
                         </p>
-                        {order.tiket.map(t => (
-                          <div key={t.id_tiket} style={{
-                            display: 'flex', justifyContent: 'space-between',
-                            alignItems: 'center', marginBottom: 6,
-                            background: 'white', borderRadius: 6,
-                            padding: '8px 10px', border: '1px dashed #DFD8CE'
-                          }}>
-                            <span style={{ fontSize: 12, fontFamily: 'monospace', color: '#4D403A', fontWeight: 700 }}>
-                              #{t.id_tiket.slice(0, 8).toUpperCase()}
-                            </span>
-                            <span style={{
-                              fontSize: 11, color: '#633806', background: '#FAEEDA',
-                              borderRadius: 50, padding: '2px 8px', fontWeight: 600
-                            }}>
-                              ⏳ Menunggu validasi
-                            </span>
-                          </div>
-                        ))}
-                        <button
-                          onClick={() => navigate(`/my-ticket/${order.id_order}`)}
-                          style={{
-                            marginTop: 6, width: '100%', padding: '8px',
-                            background: 'transparent', color: '#4D403A',
-                            border: '1px solid #DFD8CE', borderRadius: 6,
-                            fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                            fontFamily: 'inherit'
-                          }}>
-                          Lihat Detail Tiket →
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
 
                     {order.bukti_bayar && (
                       <div style={{
@@ -527,7 +530,7 @@ function Profile() {
                       </div>
                       <div style={{ textAlign: 'right' }}>
                         <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
-                          Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                          Rp {parseInt(order.total_pembayaran || 0).toLocaleString('id-ID')}
                         </p>
                         <span style={{
                           fontSize: 11, padding: '2px 8px', borderRadius: 50,
@@ -535,17 +538,6 @@ function Profile() {
                         }}>Ditolak</span>
                       </div>
                     </div>
-
-                    {order.detail_order?.map(detail => (
-                      <div key={detail.id_detail_order} style={{
-                        display: 'flex', justifyContent: 'space-between', marginBottom: 6
-                      }}>
-                        <span style={{ fontSize: 12, color: '#555' }}>{detail.jumlah} tiket</span>
-                        <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                          Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
-                        </span>
-                      </div>
-                    ))}
 
                     <div style={{
                       marginTop: 10, background: '#FDECEA', borderRadius: 8,
@@ -612,7 +604,7 @@ function Profile() {
                       background: '#262626', color: 'white',
                       border: 'none', borderRadius: 8, fontSize: 12,
                       fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit'
-                    }}>Secure Your Ticket</button>
+                    }}>Pesan Tiket</button>
                   )}
                 </div>
               ) : (
@@ -641,7 +633,7 @@ function Profile() {
                         </div>
                         <div style={{ textAlign: 'right' }}>
                           <p style={{ fontSize: 14, fontWeight: 700, color: '#262626', marginBottom: 4 }}>
-                            Rp {parseInt(order.total_pembayaran).toLocaleString('id-ID')}
+                            Rp {parseInt(order.total_pembayaran || 0).toLocaleString('id-ID')}
                           </p>
                           <span style={{
                             fontSize: 11, padding: '2px 8px', borderRadius: 50,
@@ -650,49 +642,17 @@ function Profile() {
                         </div>
                       </div>
 
-                      {order.detail_order?.map(detail => (
-                        <div key={detail.id_detail_order} style={{
-                          display: 'flex', justifyContent: 'space-between',
-                          alignItems: 'center', marginBottom: 8
-                        }}>
-                          <span style={{ fontSize: 12, color: '#555' }}>
-                            {detail.jumlah} tiket × Rp {(detail.subtotal / detail.jumlah).toLocaleString('id-ID')}
-                          </span>
-                          <span style={{ fontSize: 12, fontWeight: 600, color: '#262626' }}>
-                            Rp {parseInt(detail.subtotal).toLocaleString('id-ID')}
-                          </span>
-                        </div>
-                      ))}
-
-                      {/* List tiket */}
-                      <div style={{ marginTop: 8 }}>
-                        {order.tiket?.length > 0 ? (
-                          order.tiket.map(t => (
-                            <div key={t.id_tiket} style={{
-                              background: '#F5F2ED', borderRadius: 8,
-                              padding: '10px 14px', marginBottom: 8,
-                              display: 'flex', alignItems: 'center',
-                              justifyContent: 'space-between'
-                            }}>
-                              <div>
-                                <p style={{ fontSize: 11, color: '#A39680', marginBottom: 2 }}>ID Tiket</p>
-                                <p style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#4D403A', letterSpacing: 1 }}>
-                                  {t.id_tiket.slice(0, 8).toUpperCase()}-{t.id_tiket.slice(9, 13).toUpperCase()}
-                                </p>
-                              </div>
-                              <span style={{
-                                fontSize: 11, padding: '3px 10px', borderRadius: 50,
-                                fontWeight: 600,
-                                background: t.status_tiket === 'used' ? '#F1EFE8' : '#EAF3DE',
-                                color: t.status_tiket === 'used' ? '#5F5E5A' : '#27500A'
-                              }}>
-                                {t.status_tiket === 'used' ? 'Sudah dipakai' : 'Valid'}
-                              </span>
-                            </div>
-                          ))
-                        ) : (
-                          <p style={{ fontSize: 12, color: '#A39680', textAlign: 'center', padding: '8px 0' }}>
-                            Tiket belum tersedia.
+                      <div style={{
+                        padding: '10px 14px',
+                        background: '#FAFBF5', borderRadius: 8,
+                        border: '1px solid #e8e4dc', marginBottom: 10
+                      }}>
+                        <p style={{ fontSize: 12, color: '#555', marginBottom: 4 }}>
+                          <strong>Jumlah Tiket:</strong> {order.jumlah_tiket || order.jumlah_item || 0}
+                        </p>
+                        {order.tanggal_event && (
+                          <p style={{ fontSize: 12, color: '#555' }}>
+                            <strong>Tanggal Event:</strong> {order.tanggal_event}
                           </p>
                         )}
                       </div>
@@ -780,7 +740,7 @@ function Profile() {
             <p style={{ fontSize: 12, color: '#A39680', marginBottom: 16, lineHeight: 1.6 }}>
               Order <span style={{ fontFamily: 'monospace', fontWeight: 700, color: '#4D403A' }}>
                 #{uploadTargetOrder.id_order.slice(0, 8).toUpperCase()}
-              </span> · Rp {parseInt(uploadTargetOrder.total_pembayaran).toLocaleString('id-ID')}
+              </span> · Rp {parseInt(uploadTargetOrder.total_pembayaran || 0).toLocaleString('id-ID')}
             </p>
 
             <div
@@ -860,9 +820,9 @@ function Profile() {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
               <div>
                 <p style={{ fontSize: 15, fontWeight: 700, color: '#262626', marginBottom: 3 }}>Tulis Review</p>
-                {reviewTarget.jadwal?.pergelaran?.nama_pergelaran && (
+                {reviewTarget.pergelaran?.nama_pergelaran && (
                   <p style={{ fontSize: 12, color: '#A39680' }}>
-                    {reviewTarget.jadwal.pergelaran.nama_pergelaran}
+                    {reviewTarget.pergelaran.nama_pergelaran}
                   </p>
                 )}
               </div>
@@ -877,7 +837,7 @@ function Profile() {
             }} />
 
             {/* Cek tanggal event */}
-            {reviewTarget.jadwal?.tanggal_jadwal && new Date(reviewTarget.jadwal.tanggal_jadwal) > new Date() ? (
+            {reviewTarget.tanggal_event && new Date(reviewTarget.tanggal_event) > new Date() ? (
               <div style={{
                 background: '#FAEEDA', borderRadius: 10, padding: '16px',
                 textAlign: 'center'
@@ -889,7 +849,7 @@ function Profile() {
                 <p style={{ fontSize: 12, color: '#633806', lineHeight: 1.6 }}>
                   Review bisa ditulis setelah event selesai pada{' '}
                   <strong>
-                    {new Date(reviewTarget.jadwal.tanggal_jadwal).toLocaleDateString('id-ID', {
+                    {new Date(reviewTarget.tanggal_event).toLocaleDateString('id-ID', {
                       day: 'numeric', month: 'long', year: 'numeric'
                     })}
                   </strong>
@@ -986,13 +946,6 @@ function Profile() {
           © 2026 SurabayArt. All rights reserved.
         </span>
       </div>
-
-      <style>{`
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
 
     </div>
   )
