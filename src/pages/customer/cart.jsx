@@ -53,19 +53,16 @@ function Cart() {
         console.error('Error ambil info pembayaran:', pergelaranError)
       }
 
-      console.log('Payment info from database:', pergelaranData)
-      console.log('Selected payment method:', metodePembayaran)
-      console.log('QRIS Image:', pergelaranData?.qris_image)
-      console.log('Bank:', pergelaranData?.nama_bank)
-
       // Hitung total termasuk merchandise
-      const merchandiseTotal = cartData.merchandise?.reduce((sum, item) => {
+      const merchandiseList = cartData.merchandise || []
+      const merchandiseTotal = merchandiseList.reduce((sum, item) => {
         return sum + (item.harga_merchandise || 0) * (item.jumlah || 1)
-      }, 0) || 0
+      }, 0)
 
       const totalWithMerchandise = (cartData.totalHarga || 0) + merchandiseTotal
 
-      const { data, error } = await supabase
+      // 1. Insert ke tabel order
+      const { data: orderData, error: orderError } = await supabase
         .from('order')
         .insert([{
           id_pengguna: user.id_pengguna,
@@ -83,9 +80,38 @@ function Cart() {
         .select()
         .single()
 
-      if (error) throw error
+      if (orderError) {
+        console.error('Error insert order:', orderError)
+        throw orderError
+      }
 
-      setOrderId(data.id_order)
+      console.log('Order created:', orderData.id_order)
+
+      // 2. Insert merchandise ke detail_order (JIKA ADA)
+      if (merchandiseList.length > 0) {
+        console.log('Inserting merchandise to detail_order:', merchandiseList)
+        
+        const detailOrders = merchandiseList.map(item => ({
+          id_order: orderData.id_order,
+          id_merchandise: item.id_merchandise,
+          jumlah: item.jumlah || 1,
+          subtotal: (item.harga_merchandise || 0) * (item.jumlah || 1)
+        }))
+
+        console.log('Detail orders to insert:', detailOrders)
+
+        const { error: detailError } = await supabase
+          .from('detail_order')
+          .insert(detailOrders)
+
+        if (detailError) {
+          console.error('Error insert detail_order:', detailError)
+        } else {
+          console.log('✅ Merchandise inserted to detail_order')
+        }
+      }
+
+      setOrderId(orderData.id_order)
 
       const hasTransferInfo = pergelaranData?.nama_bank && pergelaranData?.nomor_rekening
       const hasQrisInfo = pergelaranData?.qris_image
@@ -104,7 +130,7 @@ function Cart() {
         nama_pemilik_rekening: pergelaranData?.nama_pemilik_rekening,
         qris_image: pergelaranData?.qris_image,
         total_bayar: totalWithMerchandise,
-        order_id: data.id_order,
+        order_id: orderData.id_order,
         merchandiseTotal: merchandiseTotal
       })
 

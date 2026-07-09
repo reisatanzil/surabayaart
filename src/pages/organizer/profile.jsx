@@ -86,26 +86,91 @@ function OrganizerProfile() {
     await ambilMerchOrders(selectedEvent)
   }
 
+  // ✅ DIPERBAIKI: Query manual tanpa join
   async function ambilMerchOrders(event) {
     setLoadingMerchOrders(true)
     setMerchOrders([])
-    const { data: merchList } = await supabase
-      .from('merchandise')
-      .select('id_merchandise')
-      .eq('id_pergelaran', event.id_pergelaran)
-    const merchIds = (merchList || []).map(m => m.id_merchandise)
-    if (merchIds.length === 0) { setLoadingMerchOrders(false); return }
 
-    const { data } = await supabase
-      .from('detail_order')
-      .select('*, order(*, pengguna(nama_pengguna, email_pengguna)), merchandise(nama_merchandise, foto_merchandise)')
-      .in('id_merchandise', merchIds)
+    console.log('Fetching merch orders for event:', event.id_pergelaran)
 
-    const sorted = (data || []).slice().sort((a, b) =>
-      new Date(b.order?.waktu_order || 0) - new Date(a.order?.waktu_order || 0)
-    )
-    setMerchOrders(sorted)
-    setLoadingMerchOrders(false)
+    try {
+      // 1. Ambil semua merchandise untuk event ini
+      const { data: merchList } = await supabase
+        .from('merchandise')
+        .select('id_merchandise, nama_merchandise, foto_merchandise')
+        .eq('id_pergelaran', event.id_pergelaran)
+
+      console.log('Merchandise for this event:', merchList)
+
+      if (!merchList || merchList.length === 0) { 
+        setLoadingMerchOrders(false)
+        return 
+      }
+
+      const merchIds = merchList.map(m => m.id_merchandise)
+
+      // 2. Ambil detail_order yang punya id_merchandise dari list ini
+      const { data: detailData, error: detailError } = await supabase
+        .from('detail_order')
+        .select('*')
+        .in('id_merchandise', merchIds)
+        .not('id_merchandise', 'is', null)
+
+      if (detailError) {
+        console.error('Error ambil detail_order:', detailError)
+        setLoadingMerchOrders(false)
+        return
+      }
+
+      console.log('Detail orders found:', detailData?.length || 0)
+
+      if (!detailData || detailData.length === 0) {
+        setLoadingMerchOrders(false)
+        return
+      }
+
+      // 3. Ambil semua order IDs dari detail_data
+      const orderIds = [...new Set(detailData.map(d => d.id_order))]
+
+      // 4. Ambil data order untuk semua order IDs
+      const { data: orderData } = await supabase
+        .from('order')
+        .select('id_order, id_pergelaran, status_validasi_bayar, waktu_order, bukti_bayar, pengguna(nama_pengguna, email_pengguna)')
+        .in('id_order', orderIds)
+
+      console.log('Order data:', orderData)
+
+      // 5. Buat map untuk lookup order by id
+      const orderMap = {}
+      ;(orderData || []).forEach(o => {
+        orderMap[o.id_order] = o
+      })
+
+      // 6. Buat map untuk lookup merchandise by id
+      const merchMap = {}
+      merchList.forEach(m => {
+        merchMap[m.id_merchandise] = m
+      })
+
+      // 7. Gabungkan data
+      const mergedData = detailData.map(d => ({
+        ...d,
+        order: orderMap[d.id_order] || null,
+        merchandise: merchMap[d.id_merchandise] || null
+      })).filter(d => d.order !== null)
+
+      // 8. Sort by waktu_order terbaru
+      const sorted = mergedData.slice().sort((a, b) =>
+        new Date(b.order?.waktu_order || 0) - new Date(a.order?.waktu_order || 0)
+      )
+
+      console.log('Merged merch orders:', sorted)
+      setMerchOrders(sorted)
+    } catch (err) {
+      console.error('Error in ambilMerchOrders:', err)
+    } finally {
+      setLoadingMerchOrders(false)
+    }
   }
 
   function bukaAddMerchModal() {
@@ -186,9 +251,8 @@ function OrganizerProfile() {
     if (menu === 'reviews' && penyelenggara) ambilReviews(penyelenggara)
   }, [menu, penyelenggara])
 
-  // ── ORDERS & SALES (DIPERBAIKI) ──────────────────────────────
+  // ── ORDERS & SALES ──────────────────────────────────────────
 
-  // ✅ DIPERBAIKI: Langsung query ke tabel order berdasarkan id_pergelaran
   async function ambilOrders(event) {
     setEventBayar(event)
     setLoadingOrders(true)
@@ -224,7 +288,6 @@ function OrganizerProfile() {
     setProcessingId(null)
   }
 
-  // ✅ DIPERBAIKI: Hitung tiket dari tabel order, bukan tabel tiket
   async function ambilSales(event) {
     setSelectedEvent(event)
     
@@ -236,9 +299,8 @@ function OrganizerProfile() {
       .order('waktu_order', { ascending: false })
 
     // Konversi order menjadi format "tiket" untuk ditampilkan
-    // Setiap order = 1 entry di list tiket, dengan jumlah tiket dari jumlah_tiket/jumlah_item
     const tiketList = (orderData || []).map(o => ({
-      id_tiket: o.id_order, // Pakai id_order sebagai ID
+      id_tiket: o.id_order,
       id_order: o.id_order,
       jumlah_tiket: o.jumlah_tiket || o.jumlah_item || 1,
       status_tiket: o.status_validasi_bayar === 'approved' ? 'valid' : 'pending',
@@ -348,13 +410,12 @@ function OrganizerProfile() {
     pct: reviews.length > 0 ? Math.round((reviews.filter(r => r.rating === star).length / reviews.length) * 100) : 0
   }))
 
-  // ✅ Hitung statistik tiket dari order
   const totalTiketTerjual = selectedEvent 
-    ? tickets.reduce((sum, t) => sum + (t.jumlah_tiket || 1), 0)
+    ? tikets.reduce((sum, t) => sum + (t.jumlah_tiket || 1), 0)
     : 0
   
   const totalPendapatanTiket = selectedEvent
-    ? tickets
+    ? tikets
         .filter(t => t.status_validasi_bayar === 'approved')
         .reduce((sum, t) => sum + (parseFloat(t.total_pembayaran) || 0), 0)
     : 0
@@ -461,7 +522,7 @@ function OrganizerProfile() {
           ))}
         </div>
 
-        {/* ──────────── PROFIL ──────────── */}
+        {/* ──────────── PROFIL ─────────── */}
         {menu === 'profil' && !editProfil && (
           <div style={{ background: 'white', borderRadius: 10, border: '1px solid #e8e4dc', padding: 20 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
@@ -852,7 +913,7 @@ function OrganizerProfile() {
           </div>
         )}
 
-        {/* ──────────── REVIEWS ──────────── */}
+        {/* ─────────── REVIEWS ──────────── */}
         {menu === 'reviews' && (
           <div>
             {loadingReviews ? (
